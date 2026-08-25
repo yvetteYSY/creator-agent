@@ -63,6 +63,52 @@ export interface ChatResult {
   replayed: boolean;
 }
 
+export interface AgentGenerationInput {
+  agent: Agent;
+  question: string;
+  conversationId: string;
+  history: Message[];
+  context: Citation[];
+}
+
+export interface AgentGenerationOutput {
+  answer: string;
+  citedSourceIds?: string[];
+}
+
+export type AgentGenerator = (
+  input: AgentGenerationInput,
+) => Promise<AgentGenerationOutput>;
+
+export interface RemoteAgentRouteConfig {
+  endpoint: string;
+  bearerToken?: string;
+  timeoutMs?: number;
+}
+
+export interface RemoteAgentRequest {
+  version: "2026-08-24";
+  agent: {
+    id: string;
+    name: string;
+    instructions: string;
+  };
+  conversation: {
+    id: string;
+    history: Message[];
+  };
+  message: {
+    content: string;
+  };
+  context: Citation[];
+}
+
+export interface RemoteAgentResponse {
+  answer: string;
+  citations?: string[];
+  provider?: string;
+}
+
 export interface LoadSimulationInput {
   activeUsers: number;
   messagesPerUser: number;

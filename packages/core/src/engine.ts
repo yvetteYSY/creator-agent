@@ -1,5 +1,7 @@
 import type {
   Agent,
+  AgentGenerator,
+  AgentGenerationInput,
   ChatResult,
   Chunk,
   Citation,
@@ -96,6 +98,7 @@ export class CreatorAgentEngine {
   private readonly sources = new Map<string, Source>();
   private readonly conversations = new Map<string, Conversation>();
   private readonly requestResults = new Map<string, ChatResult>();
+  private readonly pendingRequests = new Map<string, Promise<ChatResult>>();
 
   private nextId(prefix: string): string {
     this.sequence += 1;
@@ -334,6 +337,137 @@ export class CreatorAgentEngine {
     };
     this.requestResults.set(requestKey, result);
     return structuredClone(result);
+  }
+
+  async sendMessageWithGenerator(
+    input: {
+      agentId: string;
+      conversationId: string;
+      userId: string;
+      question: string;
+      idempotencyKey: string;
+    },
+    generator: AgentGenerator,
+  ): Promise<ChatResult> {
+    const { agent, conversation, requestKey } = this.validateMessageRequest(input);
+    const previous = this.requestResults.get(requestKey);
+    if (previous) return { ...structuredClone(previous), replayed: true };
+
+    const pending = this.pendingRequests.get(requestKey);
+    if (pending) {
+      const result = await pending;
+      return { ...structuredClone(result), replayed: true };
+    }
+
+    const generation = this.generateWithRemoteAgent(
+      input,
+      agent,
+      conversation,
+      requestKey,
+      generator,
+    );
+    this.pendingRequests.set(requestKey, generation);
+
+    try {
+      return structuredClone(await generation);
+    } finally {
+      this.pendingRequests.delete(requestKey);
+    }
+  }
+
+  private async generateWithRemoteAgent(
+    input: {
+      agentId: string;
+      conversationId: string;
+      userId: string;
+      question: string;
+      idempotencyKey: string;
+    },
+    agent: Agent,
+    conversation: Conversation,
+    requestKey: string,
+    generator: AgentGenerator,
+  ): Promise<ChatResult> {
+    const matches = this.retrieve(input.agentId, input.question);
+    const approvedContext: Citation[] = matches.slice(0, 4).map(({ source, chunk }) => ({
+      sourceId: source.id,
+      title: source.title,
+      excerpt: excerpt(chunk.text),
+      location: chunk.location,
+    }));
+    const generationInput: AgentGenerationInput = {
+      agent: structuredClone(agent),
+      question: input.question.trim(),
+      conversationId: conversation.id,
+      history: structuredClone(conversation.messages.slice(-10)),
+      context: structuredClone(approvedContext),
+    };
+    const generated = await generator(generationInput);
+    if (!generated.answer?.trim()) {
+      throw new CreatorAgentError(
+        "INVALID_INPUT",
+        "The routed agent returned an empty answer.",
+      );
+    }
+
+    const citedSourceIds = new Set(generated.citedSourceIds ?? []);
+    const citations = approvedContext.filter((citation) =>
+      citedSourceIds.has(citation.sourceId),
+    );
+    const userMessage: Message = {
+      id: this.nextId("message"),
+      sequence: conversation.messages.length + 1,
+      role: "user",
+      content: input.question.trim(),
+      citations: [],
+    };
+    const assistantMessage: Message = {
+      id: this.nextId("message"),
+      sequence: conversation.messages.length + 2,
+      role: "assistant",
+      content: generated.answer.trim(),
+      citations,
+    };
+    conversation.messages.push(userMessage, assistantMessage);
+
+    const result: ChatResult = {
+      userMessage: structuredClone(userMessage),
+      assistantMessage: structuredClone(assistantMessage),
+      replayed: false,
+    };
+    this.requestResults.set(requestKey, result);
+    return result;
+  }
+
+  private validateMessageRequest(input: {
+    agentId: string;
+    conversationId: string;
+    userId: string;
+    question: string;
+    idempotencyKey: string;
+  }) {
+    const agent = this.requireAgent(input.agentId);
+    if (agent.status !== "published") {
+      throw new CreatorAgentError("INVALID_STATE", "The agent is not published.");
+    }
+    const conversation = this.requireConversation(input.conversationId);
+    if (conversation.agentId !== input.agentId || conversation.userId !== input.userId) {
+      throw new CreatorAgentError(
+        "FORBIDDEN",
+        "The conversation does not belong to this agent and audience member.",
+      );
+    }
+    if (!input.question.trim() || !input.idempotencyKey.trim()) {
+      throw new CreatorAgentError(
+        "INVALID_INPUT",
+        "A question and idempotency key are required.",
+      );
+    }
+    return {
+      agent,
+      conversation,
+      requestKey: `${conversation.id}:${input.idempotencyKey}`,
+    };
   }
 
   private retrieve(agentId: string, question: string) {
