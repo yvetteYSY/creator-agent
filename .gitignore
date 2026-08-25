@@ -1,0 +1,24 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+build/
+.expo/
+.next/
+coverage/
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+
+# Logs and temporary files
+*.log
+.cache/
+.tmp/
+
+# Editors and operating systems
+.DS_Store
+.idea/
+.vscode/
