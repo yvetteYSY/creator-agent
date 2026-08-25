@@ -4,9 +4,37 @@ Creator Agent is a mobile-first platform that lets content creators build an AI 
 
 ## Project status
 
-The repository now contains a test-first, local MVP simulator. It demonstrates the core product loop: configure a creator agent, process pasted sources, stage direct video files, control which ready sources may be used publicly, chat with citations, isolate multiple audience conversations, delete source data, and simulate load/backpressure for a popular agent.
+The repository contains a test-first, responsive web MVP simulator. It demonstrates the product, privacy, routing, and concurrency behavior before introducing paid AI providers or production infrastructure.
 
 The simulator is intentionally deterministic and local. **It makes no AI-provider or external API calls, consumes no AI tokens, and cannot create model charges.** It is a product and system-behavior prototype, not a production RAG implementation.
+
+### Available now
+
+| Capability | Current implementation |
+| --- | --- |
+| Creator studio | A seeded creator can manage an agent and its knowledge sources in a responsive web interface. |
+| Text ingestion | Document or audio-transcript text can be pasted, chunked, and indexed in browser memory. |
+| Direct video selection | MP4, WebM, and QuickTime files up to 250 MB can be selected and staged locally. Only metadata is retained; the file is not uploaded. |
+| Honest video status | A staged video remains **Awaiting transcription** and cannot be retrieved or cited. The simulator never pretends it understood the video. |
+| Source privacy | Sources are preview-only by default and require explicit approval for public answers. Processing, disabled, preview-only, and deleted sources are excluded from public retrieval. |
+| Grounded chat | A deterministic local retrieval engine answers from approved text and returns source citations or says that it lacks enough information. |
+| Multi-user conversations | Maya, Theo, and Jules have isolated histories; one audience member cannot read another's conversation. |
+| Agent customization | Creators can version voice presets, response depth, signature phrases, prohibited topics, greeting, tone, and behavioral boundaries. |
+| Zero-cost preview | Style and grounded-answer previews run locally without network requests or AI usage. |
+| Bring Your Own Agent | A creator can explicitly route generation to a trusted endpoint using the documented contract. Only approved excerpts and bounded history are sent. |
+| Local agent endpoint | A deterministic HTTP reference agent supports real browser-to-endpoint testing and reports `aiCalls: 0`. |
+| Load lab | Adjustable traffic, concurrency, and queue limits demonstrate tenant-aware capacity and graceful overload. |
+| Deletion | Deleting a source immediately removes its chunks from retrieval in the simulator. |
+| Automated validation | Core, UI, routing, privacy, idempotency, upload-validation, and load tests run through `npm test`; `npm run check` also typechecks and builds every workspace. |
+
+### Current prototype boundaries
+
+- State is held in memory and resets when the page refreshes.
+- The interface is a mobile-responsive web simulator, not yet an Expo/React Native app.
+- There is no production sign-in, database, object storage, job queue, or deployment.
+- Direct video bytes are not uploaded, decoded, transcribed, embedded, or stored.
+- Pasted text uses deterministic term matching rather than model-based embeddings or generation.
+- A real user-owned endpoint may create costs for its owner; Creator Agent never silently uses a platform or developer AI key.
 
 ## Run the simulator
 
@@ -54,19 +82,64 @@ Open **Route**, select **User-owned agent endpoint**, confirm the processing bou
 
 To connect a real user-owned agent, replace the local URL with an HTTPS endpoint that implements the [Bring Your Own Agent contract](docs/AGENT_ROUTING.md). Any model usage then belongs to that endpoint's owner; Creator Agent never silently falls back to a platform or developer AI key.
 
-## MVP goals
+## Not yet implemented
 
-- Create and manage a creator profile and agent.
-- Upload PDF, Markdown, plain-text, audio, and video files.
-- Transcribe and extract text asynchronously.
-- Split, embed, and index content for semantic retrieval.
-- Let the creator review sources, processing status, and failures.
-- Configure agent instructions, tone, welcome message, and prohibited topics.
-- Preview the agent before publishing.
-- Chat with the published agent from a mobile app.
-- Ground answers in creator content and cite documents or video timestamps.
-- Delete sources and derived data.
-- Clearly disclose that users are interacting with AI.
+- Creator and audience authentication
+- Durable agent, source, configuration, and conversation persistence
+- Signed uploads to private object storage
+- File-signature validation, malware scanning, and parser sandboxing
+- PDF, Markdown, and plain-text file extraction
+- Real audio/video transcription and timestamped transcript review
+- Embeddings, vector retrieval, model generation, and streaming responses
+- Native Expo/React Native application
+- Production authorization, audit events, rate limits, moderation, and deletion jobs
+- Hosting, CI/CD, monitoring, backups, and operational runbooks
+
+## Recommended MVP iteration
+
+Keep the current deterministic simulator as a zero-cost product demo and regression suite. Add production capability through thin vertical slices that can each be tested end to end.
+
+### Iteration 1 — Durable creator workspace
+
+1. Add managed OIDC authentication.
+2. Add PostgreSQL migrations for users, agents, agent versions, sources, and source visibility.
+3. Enforce resource-level authorization and tenant isolation in every API query.
+4. Persist creator configuration while leaving deterministic chat in place.
+
+**Exit test:** two signed-in creators cannot access or mutate each other's agents or sources.
+
+### Iteration 2 — Private video ingestion
+
+1. Issue a short-lived signed upload URL for one allowlisted format, starting with MP4.
+2. Upload directly to private object storage; do not proxy large video bytes through the API.
+3. Validate MIME type and file signature, enforce size and duration limits, and scan before processing.
+4. Add an idempotent background job with visible `uploaded → scanning → transcribing → ready/failed` states.
+5. Route transcription to either a self-hosted worker or a creator-owned endpoint. Record the selected processor and usage without logging content.
+6. Let the creator review the timestamped transcript before approving it for public answers.
+
+**Exit test:** an uploaded video becomes a reviewable, timestamped source; failed, unapproved, or deleted content never appears in chat.
+
+### Iteration 3 — Production grounded chat
+
+1. Chunk approved transcripts and build a tenant-filtered vector index.
+2. Retrieve only ready, explicitly approved sources.
+3. Keep generation provider-neutral: local deterministic mode, creator-owned endpoint, or a future separately funded platform route.
+4. Validate citations against supplied context and stream responses to the client.
+5. Add evaluation cases for answerability, source accuracy, prompt injection, and prohibited topics.
+
+**Exit test:** expected questions return supported answers with correct timestamps, and unsupported questions reliably abstain.
+
+### Iteration 4 — Mobile beta and operations
+
+1. Build the Expo/React Native shell against the same authenticated API.
+2. Add quotas, per-agent concurrency limits, moderation, abuse reporting, and audit events.
+3. Add deletion workflows for originals, transcripts, chunks, embeddings, caches, and backups.
+4. Add observability that uses opaque IDs and never logs uploaded content or conversations.
+5. Run a small creator beta and prioritize changes from measured retrieval quality, latency, safety, and onboarding completion.
+
+**Exit test:** the beta survives concurrent traffic, honors privacy and deletion controls, and exposes cost per active agent without using a developer's personal AI quota.
+
+For each iteration: write the acceptance test first, implement the smallest end-to-end path, run `npm run check`, perform responsive browser QA, and merge a passing increment to `main`.
 
 ## Non-goals for the first release
 
@@ -93,7 +166,7 @@ To connect a real user-owned agent, replace the local URL with an HTTPS endpoint
 
 The architecture is intentionally provider-neutral. AI and storage services should sit behind small interfaces so cost, quality, and data-residency requirements can be revisited without rewriting product logic.
 
-## Core user journey
+## Target production user journey
 
 1. A creator signs in and creates an agent.
 2. They upload documents, audio, or video and confirm they have the right to use it.
@@ -113,7 +186,9 @@ creator-agent/
 ├── packages/
 │   └── core/            # Deterministic domain engine and load simulator
 ├── docs/
-│   └── DESIGN.md
+│   ├── AGENT_ROUTING.md # Bring Your Own Agent protocol and data boundary
+│   ├── CUSTOMIZATION.md # Knowledge/style separation and evaluation
+│   └── DESIGN.md        # Product, architecture, privacy, and scale design
 ├── package.json         # npm workspace scripts
 └── README.md
 ```
@@ -124,28 +199,23 @@ The next production increment will add the actual mobile/API/worker packages aft
 
 ### Milestone 0 — Foundation
 
-- Monorepo, CI, local development environment, database migrations, and authentication
-- Agent and source CRUD APIs
-- Baseline telemetry and audit events
+- **Available:** npm workspace, deterministic core, responsive simulator, local reference endpoint, automated checks
+- **Next:** CI, database migrations, authentication, persisted agent/source APIs, audit events
 
 ### Milestone 1 — Ingestion
 
-- Direct file upload
-- PDF/text extraction and audio/video transcription
-- Chunking, embeddings, indexing, progress reporting, retry, and deletion
+- **Available:** local video selection, validation, safe processing state, immediate simulated deletion
+- **Next:** signed private upload, scanning, real transcription, transcript review, retry, durable deletion
 
 ### Milestone 2 — Grounded chat
 
-- Retrieval pipeline and prompt assembly
-- Streaming text chat
-- Source citations and video timestamps
-- Creator preview and lightweight evaluation suite
+- **Available:** deterministic retrieval, prompt boundaries, citations, creator preview, BYOA routing
+- **Next:** embeddings, tenant-filtered vector retrieval, streaming generation, video timestamps, evaluation suite
 
 ### Milestone 3 — Publishing beta
 
-- Public agent profiles and publish/unpublish controls
-- Abuse reporting, rate limits, moderation, and usage quotas
-- Closed beta with a small group of creators
+- **Available:** simulated publishing and source-level public/preview controls
+- **Next:** public profiles, real publish versions, abuse reporting, rate limits, moderation, quotas, closed beta
 
 ## Product principles
 
@@ -163,7 +233,7 @@ The next production increment will add the actual mobile/API/worker packages aft
 
 ## Contributing
 
-The project is pre-alpha. Before implementation, review the open questions and acceptance criteria in the design document. Use short-lived branches and require passing automated checks before merging to `main`.
+The project is pre-alpha. Review the privacy requirements, open questions, and acceptance criteria in the design document before adding infrastructure or AI providers. Keep changes small, add tests with each increment, and require `npm run check` before merging to `main`.
 
 ## License
 
