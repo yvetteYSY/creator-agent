@@ -4,7 +4,37 @@ Creator Agent is a mobile-first platform that lets content creators build an AI 
 
 ## Project status
 
-This repository is at the product-design and architecture stage. The first milestone is a narrow, testable MVP: one creator can ingest a small content library and publish a text-chat agent whose answers include citations back to the source material.
+The repository now contains a test-first, local MVP simulator. It demonstrates the core product loop: configure a creator agent, process sources, control which sources may be used publicly, chat with citations, isolate multiple audience conversations, delete source data, and simulate load/backpressure for a popular agent.
+
+The simulator is intentionally deterministic and local. **It makes no AI-provider or external API calls, consumes no AI tokens, and cannot create model charges.** It is a product and system-behavior prototype, not a production RAG implementation.
+
+## Run the simulator
+
+Requirements: Node.js 22 or later.
+
+```bash
+npm install
+npm run dev
+```
+
+Open `http://127.0.0.1:4173`.
+
+Useful checks:
+
+```bash
+npm test       # Core privacy, retrieval, idempotency, load, and UI tests
+npm run check  # Typecheck, test, and production build
+```
+
+### What to try
+
+1. Add a source and choose **Preview only** or **Public answers**.
+2. Open the audience preview and ask one of the suggested questions.
+3. Switch between Maya, Theo, and Jules to see isolated conversations.
+4. Open **Load lab** and change traffic, concurrency, and queue limits.
+5. Observe bounded rejection when a popular agent exceeds safe capacity.
+
+All simulator state is held in memory and resets on refresh. Pasted content remains in the browser process and is not uploaded.
 
 ## MVP goals
 
@@ -55,26 +85,21 @@ The architecture is intentionally provider-neutral. AI and storage services shou
 6. An audience member asks a question in the mobile app.
 7. The API retrieves relevant source passages, generates a grounded response, and returns citations.
 
-## Planned repository layout
+## Repository layout
 
 ```text
 creator-agent/
 ├── apps/
-│   ├── mobile/          # Expo React Native app
-│   ├── api/             # HTTP API and orchestration
-│   └── worker/          # Ingestion and indexing jobs
+│   └── simulator/       # Responsive React MVP and UI tests
 ├── packages/
-│   ├── ai/              # Provider-neutral AI interfaces
-│   ├── config/          # Shared configuration
-│   ├── database/        # Schema, migrations, and data access
-│   ├── contracts/       # API schemas and shared types
-│   └── observability/   # Logging, metrics, and tracing
+│   └── core/            # Deterministic domain engine and load simulator
 ├── docs/
 │   └── DESIGN.md
+├── package.json         # npm workspace scripts
 └── README.md
 ```
 
-Only the documentation is committed initially. Application scaffolding should follow after the first product and architecture review so early assumptions do not harden into unnecessary code.
+The next production increment will add the actual mobile/API/worker packages after provider, hosting, privacy, and beta-cohort decisions are made. The deterministic core remains useful for product demos and fast policy regression tests.
 
 ## Delivery milestones
 

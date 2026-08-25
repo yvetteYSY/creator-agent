@@ -14,6 +14,12 @@ The MVP tests one central hypothesis:
 
 The MVP should validate this hypothesis before adding voice cloning, avatars, autonomous actions, or monetization.
 
+### Prototype cost boundary
+
+The first interactive simulator is deliberately disconnected from AI and external service providers. It uses deterministic local term matching, in-memory state, and synthetic load calculations. It must not contain model credentials, call generation/embedding/transcription APIs, consume user AI quotas, or incur token charges. Automated UI tests assert that the grounded-chat demo performs no network request.
+
+Connecting a real AI provider is a separate, explicit production milestone. Before that milestone, the team must approve provider ownership and billing, per-agent budgets, hard spend ceilings, request attribution, usage alerts, retention/no-training settings, and a kill switch. End users' personal API keys or consumer AI subscriptions must never be used implicitly to fund platform traffic.
+
 ## 2. Problem
 
 Creators accumulate valuable knowledge across long videos, podcasts, articles, guides, and private notes. Audiences have difficulty finding a specific answer, while creators repeatedly answer similar questions. Generic chatbots can imitate a tone but often lack source fidelity, provenance, and creator control.
