@@ -2,6 +2,8 @@ export type SourceKind = "document" | "audio" | "video";
 export type SourceVisibility = "public" | "preview";
 export type SourceStatus = "ready" | "disabled" | "deleted";
 export type AgentStatus = "draft" | "published";
+export type StylePreset = "warm" | "direct" | "curious" | "custom";
+export type ResponseLength = "short" | "balanced" | "deep";
 
 export interface Agent {
   id: string;
@@ -10,6 +12,10 @@ export interface Agent {
   handle: string;
   description: string;
   tone: string;
+  stylePreset: StylePreset;
+  responseLength: ResponseLength;
+  signaturePhrases: string[];
+  prohibitedTopics: string[];
   boundaries: string;
   greeting: string;
   status: AgentStatus;

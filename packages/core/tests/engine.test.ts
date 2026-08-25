@@ -131,4 +131,28 @@ describe("CreatorAgentEngine", () => {
 
     expect(result.assistantMessage.citations).toEqual([]);
   });
+
+  it("versions creator style changes and applies them to local answers", () => {
+    const { engine, agent } = createPublishedFixture();
+    const updated = engine.updateAgent("creator-a", agent.id, {
+      stylePreset: "direct",
+      responseLength: "short",
+      tone: "Direct and concise",
+      signaturePhrases: ["Make the next step small."],
+      prohibitedTopics: ["Individual financial advice"],
+    });
+    const conversation = engine.createConversation(agent.id, "audience-style");
+    const result = engine.sendMessage({
+      agentId: agent.id,
+      conversationId: conversation.id,
+      userId: "audience-style",
+      question: "How should I create a sustainable publishing cadence and repurpose it?",
+      idempotencyKey: "styled",
+    });
+
+    expect(updated.version).toBeGreaterThan(agent.version);
+    expect(result.assistantMessage.content).toMatch(/^Start here:/);
+    expect(result.assistantMessage.content).toContain("Make the next step small.");
+    expect(result.assistantMessage.citations).toHaveLength(1);
+  });
 });

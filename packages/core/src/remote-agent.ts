@@ -49,7 +49,18 @@ export async function invokeRemoteAgent(
     agent: {
       id: input.agent.id,
       name: input.agent.name,
-      instructions: `${input.agent.tone}\n${input.agent.boundaries}`,
+      instructions: [
+        `Tone: ${input.agent.tone}`,
+        `Style preset: ${input.agent.stylePreset}`,
+        `Response depth: ${input.agent.responseLength}`,
+        input.agent.signaturePhrases.length
+          ? `Optional signature language: ${input.agent.signaturePhrases.join(" | ")}`
+          : "Optional signature language: none",
+        input.agent.prohibitedTopics.length
+          ? `Prohibited topics: ${input.agent.prohibitedTopics.join(" | ")}`
+          : "Prohibited topics: none beyond platform policy",
+        `Boundaries: ${input.agent.boundaries}`,
+      ].join("\n"),
     },
     conversation: {
       id: input.conversationId,

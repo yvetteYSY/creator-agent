@@ -55,6 +55,8 @@ describe("remote agent routing", () => {
       const body = JSON.parse(String(init?.body));
       expect(body).not.toHaveProperty("bearerToken");
       expect(body.context[0].title).toBe("Approved guide");
+      expect(body.agent.instructions).toContain("Style preset: warm");
+      expect(body.agent.instructions).toContain("Response depth: balanced");
       expect((init?.headers as Record<string, string>).authorization).toBe("Bearer user-token");
       return new Response(
         JSON.stringify({ answer: "Remote answer", citations: [body.context[0].sourceId] }),

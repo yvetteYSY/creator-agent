@@ -10,6 +10,8 @@ import type {
   Source,
   SourceKind,
   SourceVisibility,
+  ResponseLength,
+  StylePreset,
 } from "./types";
 
 const STOP_WORDS = new Set([
@@ -111,6 +113,10 @@ export class CreatorAgentEngine {
     handle: string;
     description?: string;
     tone?: string;
+    stylePreset?: StylePreset;
+    responseLength?: ResponseLength;
+    signaturePhrases?: string[];
+    prohibitedTopics?: string[];
     boundaries?: string;
     greeting?: string;
   }): Agent {
@@ -128,6 +134,10 @@ export class CreatorAgentEngine {
       handle: input.handle.trim().replace(/^@/, ""),
       description: input.description?.trim() ?? "",
       tone: input.tone?.trim() || "Clear, warm, and practical",
+      stylePreset: input.stylePreset ?? "warm",
+      responseLength: input.responseLength ?? "balanced",
+      signaturePhrases: input.signaturePhrases?.map((phrase) => phrase.trim()).filter(Boolean) ?? [],
+      prohibitedTopics: input.prohibitedTopics?.map((topic) => topic.trim()).filter(Boolean) ?? [],
       boundaries:
         input.boundaries?.trim() ||
         "Do not invent personal opinions or answer outside approved sources.",
@@ -149,7 +159,7 @@ export class CreatorAgentEngine {
   updateAgent(
     ownerId: string,
     agentId: string,
-    patch: Partial<Pick<Agent, "name" | "description" | "tone" | "boundaries" | "greeting">>,
+    patch: Partial<Pick<Agent, "name" | "description" | "tone" | "stylePreset" | "responseLength" | "signaturePhrases" | "prohibitedTopics" | "boundaries" | "greeting">>,
   ): Agent {
     const agent = this.requireOwnedAgent(ownerId, agentId);
     Object.assign(agent, patch, { version: agent.version + 1 });
@@ -307,18 +317,30 @@ export class CreatorAgentEngine {
     conversation.messages.push(userMessage);
 
     const matches = this.retrieve(input.agentId, input.question);
-    const citations: Citation[] = matches.slice(0, 2).map(({ source, chunk }) => ({
+    const citationLimit = agent.responseLength === "short" ? 1 : agent.responseLength === "deep" ? 4 : 2;
+    const citations: Citation[] = matches.slice(0, citationLimit).map(({ source, chunk }) => ({
       sourceId: source.id,
       title: source.title,
       excerpt: excerpt(chunk.text),
       location: chunk.location,
     }));
 
+    const lead =
+      agent.stylePreset === "direct"
+        ? "Start here:"
+        : agent.stylePreset === "curious"
+          ? "A useful way to think about it:"
+          : agent.stylePreset === "warm"
+            ? "Let's make this practical:"
+            : "Based on the approved content:";
+    const signature = agent.signaturePhrases[0]
+      ? ` ${agent.signaturePhrases[0]}`
+      : "";
     const content =
       citations.length > 0
-        ? `Here is what ${agent.name}'s approved content says: ${citations
+        ? `${lead} ${citations
             .map((citation) => citation.excerpt)
-            .join(" ")}`
+            .join(" ")}${signature}`
         : `I don't have enough information in ${agent.name}'s approved sources to answer that yet.`;
 
     const assistantMessage: Message = {
