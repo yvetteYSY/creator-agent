@@ -36,6 +36,23 @@ npm run check  # Typecheck, test, and production build
 
 All simulator state is held in memory and resets on refresh. Pasted content remains in the browser process and is not uploaded.
 
+### Zero-cost end-to-end routing
+
+To exercise a real browser-to-agent HTTP request without calling an AI provider:
+
+```bash
+npm run dev:e2e
+```
+
+This starts:
+
+- The simulator at `http://127.0.0.1:4173`
+- A deterministic reference agent at `http://127.0.0.1:4310/v1/respond`
+
+Open **Route**, select **User-owned agent endpoint**, confirm the processing boundary, and activate the prefilled local endpoint. The reference endpoint returns cited answers using approved excerpts and its health response reports `aiCalls: 0`.
+
+To connect a real user-owned agent, replace the local URL with an HTTPS endpoint that implements the [Bring Your Own Agent contract](docs/AGENT_ROUTING.md). Any model usage then belongs to that endpoint's owner; Creator Agent never silently falls back to a platform or developer AI key.
+
 ## MVP goals
 
 - Create and manage a creator profile and agent.
@@ -90,6 +107,7 @@ The architecture is intentionally provider-neutral. AI and storage services shou
 ```text
 creator-agent/
 ├── apps/
+│   ├── local-agent/     # Zero-cost HTTP reference endpoint
 │   └── simulator/       # Responsive React MVP and UI tests
 ├── packages/
 │   └── core/            # Deterministic domain engine and load simulator
@@ -139,6 +157,7 @@ The next production increment will add the actual mobile/API/worker packages aft
 ## Key documentation
 
 - [Product and technical design](docs/DESIGN.md)
+- [Bring Your Own Agent routing contract](docs/AGENT_ROUTING.md)
 
 ## Contributing
 

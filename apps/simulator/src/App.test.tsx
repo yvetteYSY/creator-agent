@@ -41,4 +41,36 @@ describe("Creator Agent simulator", () => {
     expect(screen.getByText("1,000")).toBeTruthy();
     expect(screen.getByText("Graceful overload active")).toBeTruthy();
   });
+
+  it("routes to an explicitly activated user endpoint without exposing private sources", async () => {
+    const fetchSpy = vi.fn(async (_url: URL | RequestInfo, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body));
+      expect(JSON.stringify(body)).not.toContain("Unreleased launch notes");
+      expect(JSON.stringify(body)).not.toContain("private draft");
+      return new Response(
+        JSON.stringify({
+          answer: "Answer from the user-owned endpoint.",
+          citations: [body.context[0].sourceId],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    });
+    vi.stubGlobal("fetch", fetchSpy);
+    render(<App />);
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Route" })[0]);
+    fireEvent.click(screen.getByRole("radio", { name: /user-owned agent endpoint/i }));
+    const activate = screen.getByRole("button", { name: /activate user-owned route/i });
+    expect((activate as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole("checkbox", { name: /i own or trust this endpoint/i }));
+    expect((activate as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(activate);
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Preview" })[0]);
+    fireEvent.click(screen.getByRole("button", { name: /how often should i publish/i }));
+
+    expect(await screen.findByText("Answer from the user-owned endpoint.")).toBeTruthy();
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(screen.getByText(/routed to the user-owned endpoint/i)).toBeTruthy();
+  });
 });

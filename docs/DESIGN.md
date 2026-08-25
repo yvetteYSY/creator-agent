@@ -20,6 +20,8 @@ The first interactive simulator is deliberately disconnected from AI and externa
 
 Connecting a real AI provider is a separate, explicit production milestone. Before that milestone, the team must approve provider ownership and billing, per-agent budgets, hard spend ceilings, request attribution, usage alerts, retention/no-training settings, and a kill switch. End users' personal API keys or consumer AI subscriptions must never be used implicitly to fund platform traffic.
 
+The prototype supports an explicit Bring Your Own Agent (BYOA) route. Creator Agent performs authorization and retrieval, then sends only the current question, bounded history, agent instructions, and approved excerpts to the selected endpoint. The route is disabled by default, requires an ownership/trust acknowledgement, accepts HTTPS for remote endpoints or HTTP only on localhost, and keeps any bearer token in memory. See [AGENT_ROUTING.md](AGENT_ROUTING.md).
+
 ## 2. Problem
 
 Creators accumulate valuable knowledge across long videos, podcasts, articles, guides, and private notes. Audiences have difficulty finding a specific answer, while creators repeatedly answer similar questions. Generic chatbots can imitate a tone but often lack source fidelity, provenance, and creator control.
