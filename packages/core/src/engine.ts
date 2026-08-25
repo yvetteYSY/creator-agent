@@ -198,6 +198,50 @@ export class CreatorAgentEngine {
     return structuredClone(source);
   }
 
+  stageVideoSource(input: {
+    ownerId: string;
+    agentId: string;
+    title: string;
+    fileName: string;
+    mimeType: string;
+    size: number;
+    visibility: SourceVisibility;
+  }): Source {
+    this.requireOwnedAgent(input.ownerId, input.agentId);
+    const allowedTypes = new Set(["video/mp4", "video/webm", "video/quicktime"]);
+    if (!input.title.trim() || !input.fileName.trim()) {
+      throw new CreatorAgentError("INVALID_INPUT", "A video file and title are required.");
+    }
+    if (!allowedTypes.has(input.mimeType)) {
+      throw new CreatorAgentError(
+        "INVALID_INPUT",
+        "Use an MP4, WebM, or QuickTime video.",
+      );
+    }
+    if (!Number.isFinite(input.size) || input.size <= 0 || input.size > 250_000_000) {
+      throw new CreatorAgentError(
+        "INVALID_INPUT",
+        "Video size must be between 1 byte and 250 MB.",
+      );
+    }
+
+    const sourceId = this.nextId("source");
+    const source: Source = {
+      id: sourceId,
+      agentId: input.agentId,
+      ownerId: input.ownerId,
+      title: input.title.trim(),
+      kind: "video",
+      visibility: input.visibility,
+      status: "processing",
+      size: input.size,
+      processingDetail: "Awaiting a creator-owned or self-hosted transcription route",
+      chunks: [],
+    };
+    this.sources.set(sourceId, source);
+    return structuredClone(source);
+  }
+
   listSources(ownerId: string, agentId: string): Source[] {
     this.requireOwnedAgent(ownerId, agentId);
     return [...this.sources.values()]

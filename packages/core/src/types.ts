@@ -1,6 +1,6 @@
 export type SourceKind = "document" | "audio" | "video";
 export type SourceVisibility = "public" | "preview";
-export type SourceStatus = "ready" | "disabled" | "deleted";
+export type SourceStatus = "processing" | "ready" | "disabled" | "deleted";
 export type AgentStatus = "draft" | "published";
 export type StylePreset = "warm" | "direct" | "curious" | "custom";
 export type ResponseLength = "short" | "balanced" | "deep";
@@ -38,6 +38,7 @@ export interface Source {
   visibility: SourceVisibility;
   status: SourceStatus;
   size: number;
+  processingDetail?: string;
   chunks: Chunk[];
 }
 

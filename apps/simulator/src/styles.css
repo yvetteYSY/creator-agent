@@ -82,6 +82,7 @@ h1 { font: 800 36px/1.12 ui-sans-serif, sans-serif; letter-spacing: -.035em; mar
 .source-copy p { margin: 5px 0 0; color: var(--muted); font-size: 11px; text-transform: capitalize; }
 .ready-label { display: inline-flex; gap: 3px; align-items: center; color: var(--green-2); background: var(--mint); border-radius: 99px; font-size: 9px; font-weight: 800; padding: 3px 6px; }
 .ready-label svg { width: 10px; height: 10px; }
+.ready-label.processing { color: #8b5b27; background: #fff1dc; }
 .visibility-select { border: 1px solid var(--line); border-radius: 9px; padding: 8px 28px 8px 10px; background: white; font-size: 11px; font-weight: 700; color: var(--ink); }
 .visibility-select.preview { color: #6b645c; background-color: #f7f3ed; }
 .icon-button { width: 32px; height: 32px; border-radius: 9px; display: grid; place-items: center; border: 0; background: transparent; color: #8e9993; cursor: pointer; }
@@ -111,6 +112,16 @@ h1 { font: 800 36px/1.12 ui-sans-serif, sans-serif; letter-spacing: -.035em; mar
 .source-form input, .source-form select, .source-form textarea { width: 100%; border: 1px solid #d9ded8; background: white; border-radius: 9px; padding: 10px 11px; color: var(--ink); margin-top: 6px; font-size: 12px; resize: vertical; }
 .source-form textarea { line-height: 1.5; }
 .source-form > label { display: block; margin-top: 12px; }
+.video-picker { display: block; margin-top: 12px; }
+.file-drop { position: relative; display: grid; grid-template-columns: 34px 1fr; align-items: center; gap: 10px; min-height: 76px; margin-top: 6px; padding: 13px; overflow: hidden; color: var(--green); background: white; border: 1px dashed #aabbb1; border-radius: 10px; cursor: pointer; }
+.file-drop.selected { border-style: solid; border-color: #77aa8d; background: #f8fcf9; }
+.file-drop > svg { width: 24px; height: 24px; }
+.file-drop > span { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.file-drop strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
+.file-drop small { color: var(--muted); font-size: 9px; font-weight: 500; }
+.file-drop input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; padding: 0; opacity: 0; cursor: pointer; }
+.processing-explainer { display: flex; align-items: flex-start; gap: 6px; margin-top: 8px; color: var(--muted); font-size: 9px; font-weight: 500; line-height: 1.45; }
+.processing-explainer svg { flex: 0 0 auto; width: 12px; height: 12px; margin-top: 1px; color: #8b5b27; }
 .source-form fieldset { border: 0; padding: 0; margin: 16px 0 0; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .source-form legend { grid-column: 1 / -1; margin-bottom: 7px; }
 .source-form .radio-card { display: flex; gap: 10px; align-items: center; padding: 11px; background: white; border: 1px solid var(--line); border-radius: 10px; cursor: pointer; }

@@ -4,7 +4,7 @@ Creator Agent is a mobile-first platform that lets content creators build an AI 
 
 ## Project status
 
-The repository now contains a test-first, local MVP simulator. It demonstrates the core product loop: configure a creator agent, process sources, control which sources may be used publicly, chat with citations, isolate multiple audience conversations, delete source data, and simulate load/backpressure for a popular agent.
+The repository now contains a test-first, local MVP simulator. It demonstrates the core product loop: configure a creator agent, process pasted sources, stage direct video files, control which ready sources may be used publicly, chat with citations, isolate multiple audience conversations, delete source data, and simulate load/backpressure for a popular agent.
 
 The simulator is intentionally deterministic and local. **It makes no AI-provider or external API calls, consumes no AI tokens, and cannot create model charges.** It is a product and system-behavior prototype, not a production RAG implementation.
 
@@ -28,14 +28,14 @@ npm run check  # Typecheck, test, and production build
 
 ### What to try
 
-1. Add a source and choose **Preview only** or **Public answers**.
+1. Add a pasted source, or choose **Video file** to stage an MP4, WebM, or QuickTime file locally.
 2. Open the audience preview and ask one of the suggested questions.
 3. Open **Customize** and change voice preset, response depth, signature phrases, or boundaries.
 4. Switch between Maya, Theo, and Jules to see isolated conversations.
 5. Open **Load lab** and change traffic, concurrency, and queue limits.
 6. Observe bounded rejection when a popular agent exceeds safe capacity.
 
-All simulator state is held in memory and resets on refresh. Pasted content remains in the browser process and is not uploaded.
+All simulator state is held in memory and resets on refresh. Pasted content and selected video files remain in the browser process and are not uploaded. A selected video is represented only by metadata after staging and stays in **Awaiting transcription**; it cannot be retrieved or cited until a real transcription route is configured. The simulator never pretends it transcribed the file.
 
 ### Zero-cost end-to-end routing
 

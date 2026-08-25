@@ -155,4 +155,47 @@ describe("CreatorAgentEngine", () => {
     expect(result.assistantMessage.content).toContain("Make the next step small.");
     expect(result.assistantMessage.citations).toHaveLength(1);
   });
+
+  it("stages a validated video without making it retrievable before transcription", () => {
+    const { engine, agent } = createPublishedFixture();
+    const video = engine.stageVideoSource({
+      ownerId: "creator-a",
+      agentId: agent.id,
+      title: "Creator workshop",
+      fileName: "workshop.mp4",
+      mimeType: "video/mp4",
+      size: 42_000_000,
+      visibility: "public",
+    });
+    const conversation = engine.createConversation(agent.id, "audience-video");
+    const result = engine.sendMessage({
+      agentId: agent.id,
+      conversationId: conversation.id,
+      userId: "audience-video",
+      question: "What does the creator workshop say about camera setup?",
+      idempotencyKey: "video-still-processing",
+    });
+
+    expect(video.status).toBe("processing");
+    expect(video.chunks).toEqual([]);
+    expect(result.assistantMessage.citations).not.toContainEqual(
+      expect.objectContaining({ sourceId: video.id }),
+    );
+  });
+
+  it("rejects unsupported or oversized video files", () => {
+    const { engine, agent } = createPublishedFixture();
+    const base = {
+      ownerId: "creator-a",
+      agentId: agent.id,
+      title: "Creator workshop",
+      fileName: "workshop.avi",
+      visibility: "preview" as const,
+    };
+
+    expect(() => engine.stageVideoSource({ ...base, mimeType: "video/x-msvideo", size: 10_000 }))
+      .toThrowError(/MP4, WebM, or QuickTime/i);
+    expect(() => engine.stageVideoSource({ ...base, mimeType: "video/mp4", size: 250_000_001 }))
+      .toThrowError(/250 MB/i);
+  });
 });

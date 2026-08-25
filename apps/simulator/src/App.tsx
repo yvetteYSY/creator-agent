@@ -6,6 +6,7 @@ import {
   ChevronRight,
   CircleGauge,
   Cable,
+  Clock3,
   FileText,
   Film,
   FlaskConical,
@@ -19,6 +20,7 @@ import {
   ShieldCheck,
   Sparkles,
   Trash2,
+  UploadCloud,
   Users,
 } from "lucide-react";
 import {
@@ -109,7 +111,9 @@ function sourceIcon(kind: SourceKind) {
 }
 
 function formatBytes(bytes: number) {
-  return bytes < 1_000 ? `${bytes} B` : `${(bytes / 1_000).toFixed(1)} KB`;
+  if (bytes < 1_000) return `${bytes} B`;
+  if (bytes < 1_000_000) return `${(bytes / 1_000).toFixed(1)} KB`;
+  return `${(bytes / 1_000_000).toFixed(1)} MB`;
 }
 
 export function App() {
@@ -179,6 +183,14 @@ export function App() {
                 ...input,
               });
               refresh("Source processed locally and added to the agent.");
+            }}
+            onStageVideo={(input) => {
+              runtime.engine.stageVideoSource({
+                ownerId: runtime.ownerId,
+                agentId: runtime.agentId,
+                ...input,
+              });
+              refresh("Video staged locally. It will remain unavailable to answers until transcription is configured.");
             }}
             onVisibility={(sourceId, visibility) => {
               runtime.engine.setSourceVisibility(runtime.ownerId, sourceId, visibility);
@@ -254,6 +266,7 @@ function Studio({
   agent,
   sources,
   onAddSource,
+  onStageVideo,
   onVisibility,
   onDelete,
   onPreview,
@@ -263,6 +276,7 @@ function Studio({
   agent: ReturnType<CreatorAgentEngine["getAgent"]>;
   sources: Source[];
   onAddSource: (input: { title: string; kind: SourceKind; content: string; visibility: SourceVisibility }) => void;
+  onStageVideo: (input: { title: string; fileName: string; mimeType: string; size: number; visibility: SourceVisibility }) => void;
   onVisibility: (sourceId: string, visibility: SourceVisibility) => void;
   onDelete: (sourceId: string) => void;
   onPreview: () => void;
@@ -274,14 +288,27 @@ function Studio({
   const [kind, setKind] = useState<SourceKind>("document");
   const [visibility, setVisibility] = useState<SourceVisibility>("preview");
   const [content, setContent] = useState("");
+  const [videoFile, setVideoFile] = useState<File | null>(null);
   const [error, setError] = useState("");
 
   const submit = (event: React.FormEvent) => {
     event.preventDefault();
     try {
-      onAddSource({ title, kind, content, visibility });
+      if (kind === "video") {
+        if (!videoFile) throw new Error("Choose an MP4, WebM, or QuickTime video.");
+        onStageVideo({
+          title,
+          fileName: videoFile.name,
+          mimeType: videoFile.type,
+          size: videoFile.size,
+          visibility,
+        });
+      } else {
+        onAddSource({ title, kind, content, visibility });
+      }
       setTitle("");
       setContent("");
+      setVideoFile(null);
       setVisibility("preview");
       setShowForm(false);
       setError("");
@@ -318,25 +345,55 @@ function Studio({
 
           {showForm && (
             <form className="source-form" onSubmit={submit}>
-              <div className="form-banner"><LockKeyhole aria-hidden="true" /><span>This prototype processes pasted text in your browser. Nothing is uploaded.</span></div>
+              <div className="form-banner"><LockKeyhole aria-hidden="true" /><span>{kind === "video" ? "The selected file stays in this browser. No bytes are uploaded or sent to a transcription service." : "This prototype processes pasted text in your browser. Nothing is uploaded."}</span></div>
               <div className="form-row">
                 <label>
                   Source title
-                  <input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="e.g. My podcast transcript" />
+                  <input value={title} onChange={(event) => setTitle(event.target.value)} placeholder={kind === "video" ? "e.g. My creator workshop" : "e.g. My podcast transcript"} />
                 </label>
                 <label>
                   Content type
-                  <select value={kind} onChange={(event) => setKind(event.target.value as SourceKind)}>
+                  <select value={kind} onChange={(event) => {
+                    const nextKind = event.target.value as SourceKind;
+                    setKind(nextKind);
+                    setError("");
+                    if (nextKind !== "video") setVideoFile(null);
+                  }}>
                     <option value="document">Document</option>
-                    <option value="video">Video transcript</option>
+                    <option value="video">Video file</option>
                     <option value="audio">Audio transcript</option>
                   </select>
                 </label>
               </div>
-              <label>
-                Extracted content
-                <textarea value={content} onChange={(event) => setContent(event.target.value)} placeholder="Paste text or a transcript to simulate scanning, chunking, and retrieval…" rows={5} />
-              </label>
+              {kind === "video" ? (
+                <label className="video-picker">
+                  Video file
+                  <span className={videoFile ? "file-drop selected" : "file-drop"}>
+                    <UploadCloud aria-hidden="true" />
+                    <span>
+                      <strong>{videoFile?.name ?? "Choose a video from your device"}</strong>
+                      <small>{videoFile ? `${formatBytes(videoFile.size)} · staged locally` : "MP4, WebM, or QuickTime · up to 250 MB"}</small>
+                    </span>
+                    <input
+                      aria-label="Video file"
+                      type="file"
+                      accept="video/mp4,video/webm,video/quicktime,.mp4,.webm,.mov"
+                      onChange={(event) => {
+                        const file = event.target.files?.[0] ?? null;
+                        setVideoFile(file);
+                        setError("");
+                        if (file && !title) setTitle(file.name.replace(/\.[^.]+$/, ""));
+                      }}
+                    />
+                  </span>
+                  <span className="processing-explainer"><Clock3 /> This zero-cost prototype stages metadata only. The source stays in processing and cannot answer questions until a creator-owned or self-hosted transcription route is connected.</span>
+                </label>
+              ) : (
+                <label>
+                  Extracted content
+                  <textarea value={content} onChange={(event) => setContent(event.target.value)} placeholder="Paste text or a transcript to simulate scanning, chunking, and retrieval…" rows={5} />
+                </label>
+              )}
               <fieldset>
                 <legend>Who can use this source?</legend>
                 <label className={visibility === "preview" ? "radio-card selected" : "radio-card"}>
@@ -353,7 +410,7 @@ function Studio({
               {error && <p className="form-error" role="alert">{error}</p>}
               <div className="form-actions">
                 <button className="button ghost" type="button" onClick={() => setShowForm(false)}>Cancel</button>
-                <button className="button primary" type="submit"><Sparkles aria-hidden="true" /> Process source</button>
+                <button className="button primary" type="submit">{kind === "video" ? <UploadCloud aria-hidden="true" /> : <Sparkles aria-hidden="true" />} {kind === "video" ? "Stage video" : "Process source"}</button>
               </div>
             </form>
           )}
@@ -365,9 +422,12 @@ function Studio({
                 <div className="source-copy">
                   <div className="source-title-line">
                     <h3>{source.title}</h3>
-                    <span className="ready-label"><Check /> Ready</span>
+                    <span className={source.status === "processing" ? "ready-label processing" : "ready-label"}>
+                      {source.status === "processing" ? <Clock3 /> : <Check />}
+                      {source.status === "processing" ? "Awaiting transcription" : "Ready"}
+                    </span>
                   </div>
-                  <p>{source.chunks.length} sections · {formatBytes(source.size)} · {source.kind}</p>
+                  <p>{source.status === "processing" ? source.processingDetail : `${source.chunks.length} sections`} · {formatBytes(source.size)} · {source.kind}</p>
                 </div>
                 <select
                   className={`visibility-select ${source.visibility}`}

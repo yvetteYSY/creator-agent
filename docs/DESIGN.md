@@ -16,7 +16,7 @@ The MVP should validate this hypothesis before adding voice cloning, avatars, au
 
 ### Prototype cost boundary
 
-The first interactive simulator is deliberately disconnected from AI and external service providers. It uses deterministic local term matching, in-memory state, and synthetic load calculations. It must not contain model credentials, call generation/embedding/transcription APIs, consume user AI quotas, or incur token charges. Automated UI tests assert that the grounded-chat demo performs no network request.
+The first interactive simulator is deliberately disconnected from AI and external service providers. It uses deterministic local term matching, in-memory state, and synthetic load calculations. It must not contain model credentials, call generation/embedding/transcription APIs, consume user AI quotas, or incur token charges. Direct video selection stages file metadata locally and leaves the source in `processing`; the simulator does not read, upload, or falsely transcribe the selected bytes. Automated UI tests assert that grounded chat and direct video staging perform no network request.
 
 Connecting a real AI provider is a separate, explicit production milestone. Before that milestone, the team must approve provider ownership and billing, per-agent budgets, hard spend ceilings, request attribution, usage alerts, retention/no-training settings, and a kill switch. End users' personal API keys or consumer AI subscriptions must never be used implicitly to fund platform traffic.
 

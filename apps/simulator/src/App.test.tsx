@@ -60,6 +60,26 @@ describe("Creator Agent simulator", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
+  it("stages a video file locally without uploading or claiming it is ready", () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("button", { name: /add source/i }));
+    fireEvent.change(screen.getByLabelText(/content type/i), { target: { value: "video" } });
+    const file = new File(["local video bytes"], "creator-workshop.mp4", { type: "video/mp4" });
+    fireEvent.change(screen.getByLabelText(/^video file$/i), { target: { files: [file] } });
+
+    expect(screen.getByDisplayValue("creator-workshop")).toBeTruthy();
+    expect(screen.getByText(/staged locally/i)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /stage video/i }));
+
+    expect(screen.getByText("creator-workshop")).toBeTruthy();
+    expect(screen.getByText(/awaiting transcription/i)).toBeTruthy();
+    expect(screen.getByText(/remain unavailable to answers/i)).toBeTruthy();
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
   it("routes to an explicitly activated user endpoint without exposing private sources", async () => {
     const fetchSpy = vi.fn(async (_url: URL | RequestInfo, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body));
