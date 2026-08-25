@@ -1,0 +1,9 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "tsBuildInfoFile": "../../node_modules/.cache/local-agent.tsbuildinfo",
+    "types": ["node"]
+  },
+  "include": ["src", "tests"]
+}
