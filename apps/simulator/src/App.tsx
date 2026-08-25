@@ -12,6 +12,7 @@ import {
   LockKeyhole,
   MessageCircle,
   Mic2,
+  Palette,
   Plus,
   Send,
   Server,
@@ -25,13 +26,16 @@ import {
   CreatorAgentError,
   invokeRemoteAgent,
   simulateConcurrentChat,
+  type Agent,
   type Conversation,
+  type ResponseLength,
   type Source,
   type SourceKind,
   type SourceVisibility,
+  type StylePreset,
 } from "@creator-agent/core";
 
-type View = "studio" | "preview" | "routing" | "load";
+type View = "studio" | "customize" | "preview" | "routing" | "load";
 type AudienceId = "maya" | "theo" | "jules";
 type AgentRoute =
   | { mode: "local" }
@@ -53,6 +57,10 @@ function createRuntime() {
     description:
       "Practical guidance for building an audience and a sustainable creative practice.",
     tone: "Warm, concise, encouraging, and specific",
+    stylePreset: "warm",
+    responseLength: "balanced",
+    signaturePhrases: ["Make the next step small enough to start."],
+    prohibitedTopics: ["Individual financial advice", "Private relationships"],
     boundaries:
       "Stay within approved sources. Never invent private opinions, personal details, or financial advice.",
     greeting: "What are you trying to create this week?",
@@ -130,6 +138,9 @@ export function App() {
           <NavButton active={view === "studio"} icon={<BookOpen />} onClick={() => setView("studio")}>
             Studio
           </NavButton>
+          <NavButton active={view === "customize"} icon={<Palette />} onClick={() => setView("customize")}>
+            Customize
+          </NavButton>
           <NavButton active={view === "preview"} icon={<MessageCircle />} onClick={() => setView("preview")}>
             Preview
           </NavButton>
@@ -178,7 +189,18 @@ export function App() {
               refresh("Source and its simulated derived data were deleted.");
             }}
             onPreview={() => setView("preview")}
+            onCustomize={() => setView("customize")}
             onRoute={() => setView("routing")}
+          />
+        )}
+        {view === "customize" && (
+          <Customization
+            agent={agent}
+            onSave={(patch) => {
+              runtime.engine.updateAgent(runtime.ownerId, runtime.agentId, patch);
+              refresh("Customization saved as a new agent version.");
+            }}
+            onPreview={() => setView("preview")}
           />
         )}
         {view === "preview" && (
@@ -200,6 +222,7 @@ export function App() {
 
       <nav className="mobile-nav" aria-label="Mobile navigation">
         <NavButton active={view === "studio"} icon={<BookOpen />} onClick={() => setView("studio")}>Studio</NavButton>
+        <NavButton active={view === "customize"} icon={<Palette />} onClick={() => setView("customize")}>Style</NavButton>
         <NavButton active={view === "preview"} icon={<MessageCircle />} onClick={() => setView("preview")}>Preview</NavButton>
         <NavButton active={view === "routing"} icon={<Cable />} onClick={() => setView("routing")}>Route</NavButton>
         <NavButton active={view === "load"} icon={<FlaskConical />} onClick={() => setView("load")}>Load</NavButton>
@@ -234,6 +257,7 @@ function Studio({
   onVisibility,
   onDelete,
   onPreview,
+  onCustomize,
   onRoute,
 }: {
   agent: ReturnType<CreatorAgentEngine["getAgent"]>;
@@ -242,6 +266,7 @@ function Studio({
   onVisibility: (sourceId: string, visibility: SourceVisibility) => void;
   onDelete: (sourceId: string) => void;
   onPreview: () => void;
+  onCustomize: () => void;
   onRoute: () => void;
 }) {
   const [showForm, setShowForm] = useState(false);
@@ -377,10 +402,151 @@ function Studio({
               <div><dt>Tone</dt><dd>{agent.tone}</dd></div>
               <div><dt>Boundary</dt><dd>{agent.boundaries}</dd></div>
             </dl>
+            <button className="route-link" type="button" onClick={onCustomize}><Palette /> Customize tone & behavior <ChevronRight /></button>
             <button className="route-link" type="button" onClick={onRoute}><Cable /> Configure response routing <ChevronRight /></button>
           </section>
         </aside>
       </div>
+    </div>
+  );
+}
+
+const STYLE_PRESETS: Array<{
+  id: StylePreset;
+  name: string;
+  description: string;
+  tone: string;
+}> = [
+  { id: "warm", name: "Warm mentor", description: "Encouraging, practical, and human", tone: "Warm, concise, encouraging, and specific" },
+  { id: "direct", name: "Direct strategist", description: "Decisive, crisp, and action-oriented", tone: "Direct, concise, decisive, and practical" },
+  { id: "curious", name: "Curious teacher", description: "Reflective, explanatory, and question-led", tone: "Curious, educational, reflective, and clear" },
+  { id: "custom", name: "Custom voice", description: "Describe the creator's distinct style", tone: "Distinctive and faithful to the creator's approved examples" },
+];
+
+function stylePreview(
+  preset: StylePreset,
+  length: ResponseLength,
+  signaturePhrases: string[],
+) {
+  const lead = preset === "direct"
+    ? "Start here:"
+    : preset === "curious"
+      ? "A useful way to think about it:"
+      : preset === "warm"
+        ? "Let's make this practical:"
+        : "Based on the approved content:";
+  const sentences = [
+    "Publish one durable idea each week.",
+    "Turn it into one short video and three conversation prompts.",
+    "Measure meaningful replies and saves instead of raw impressions.",
+  ];
+  const limit = length === "short" ? 1 : length === "deep" ? 3 : 2;
+  return `${lead} ${sentences.slice(0, limit).join(" ")}${signaturePhrases[0] ? ` ${signaturePhrases[0]}` : ""}`;
+}
+
+function Customization({
+  agent,
+  onSave,
+  onPreview,
+}: {
+  agent: Agent;
+  onSave: (patch: Partial<Pick<Agent, "tone" | "stylePreset" | "responseLength" | "signaturePhrases" | "prohibitedTopics" | "boundaries" | "greeting">>) => void;
+  onPreview: () => void;
+}) {
+  const [stylePreset, setStylePreset] = useState(agent.stylePreset);
+  const [responseLength, setResponseLength] = useState(agent.responseLength);
+  const [tone, setTone] = useState(agent.tone);
+  const [signatureText, setSignatureText] = useState(agent.signaturePhrases.join("\n"));
+  const [prohibitedText, setProhibitedText] = useState(agent.prohibitedTopics.join("\n"));
+  const [boundaries, setBoundaries] = useState(agent.boundaries);
+  const [greeting, setGreeting] = useState(agent.greeting);
+  const signaturePhrases = signatureText.split("\n").map((value) => value.trim()).filter(Boolean);
+  const prohibitedTopics = prohibitedText.split("\n").map((value) => value.trim()).filter(Boolean);
+  const preview = stylePreview(stylePreset, responseLength, signaturePhrases);
+
+  const choosePreset = (preset: typeof STYLE_PRESETS[number]) => {
+    setStylePreset(preset.id);
+    if (preset.id !== "custom") setTone(preset.tone);
+  };
+
+  return (
+    <div className="workspace customization-workspace">
+      <section className="page-heading">
+        <div>
+          <div className="eyebrow"><Palette /> Customization studio</div>
+          <h1>Shape how the agent speaks</h1>
+          <p>Knowledge stays grounded in approved sources. These controls shape delivery, boundaries, and recognizable language without changing the underlying facts.</p>
+        </div>
+        <div className="heading-actions">
+          <span className="status-chip healthy"><span /> Published · v{agent.version}</span>
+          <button className="button secondary" type="button" onClick={onPreview}>Open chat preview <ChevronRight /></button>
+        </div>
+      </section>
+
+      <form className="customization-grid" onSubmit={(event) => {
+        event.preventDefault();
+        onSave({ stylePreset, responseLength, tone, signaturePhrases, prohibitedTopics, boundaries, greeting });
+      }}>
+        <div className="customization-controls">
+          <section className="content-panel customization-section">
+            <div className="section-heading"><div><h2>Voice preset</h2><p>Start with a direction, then refine the language.</p></div></div>
+            <div className="preset-grid">
+              {STYLE_PRESETS.map((preset) => (
+                <label className={stylePreset === preset.id ? "preset-option selected" : "preset-option"} key={preset.id}>
+                  <input type="radio" name="style-preset" checked={stylePreset === preset.id} onChange={() => choosePreset(preset)} />
+                  <span><strong>{preset.name}</strong><small>{preset.description}</small></span>
+                  {stylePreset === preset.id && <Check aria-hidden="true" />}
+                </label>
+              ))}
+            </div>
+            <label className="custom-field">
+              Tone description
+              <textarea rows={3} value={tone} onChange={(event) => { setTone(event.target.value); setStylePreset("custom"); }} />
+            </label>
+          </section>
+
+          <section className="content-panel customization-section">
+            <div className="section-heading"><div><h2>Answer behavior</h2><p>Control depth, signature language, and hard boundaries.</p></div></div>
+            <fieldset className="length-control">
+              <legend>Response depth</legend>
+              {(["short", "balanced", "deep"] as ResponseLength[]).map((length) => (
+                <label className={responseLength === length ? "selected" : ""} key={length}>
+                  <input type="radio" name="response-length" checked={responseLength === length} onChange={() => setResponseLength(length)} />
+                  <span>{length === "short" ? "Short" : length === "balanced" ? "Balanced" : "Deep dive"}</span>
+                </label>
+              ))}
+            </fieldset>
+            <div className="custom-field-row">
+              <label className="custom-field">
+                Signature phrases <span>one per line</span>
+                <textarea rows={4} value={signatureText} onChange={(event) => setSignatureText(event.target.value)} placeholder="Make the next step small enough to start." />
+              </label>
+              <label className="custom-field">
+                Prohibited topics <span>one per line</span>
+                <textarea rows={4} value={prohibitedText} onChange={(event) => setProhibitedText(event.target.value)} placeholder="Private relationships" />
+              </label>
+            </div>
+            <label className="custom-field">
+              Welcome message
+              <input value={greeting} onChange={(event) => setGreeting(event.target.value)} />
+            </label>
+            <label className="custom-field">
+              Behavioral boundaries
+              <textarea rows={3} value={boundaries} onChange={(event) => setBoundaries(event.target.value)} />
+            </label>
+          </section>
+        </div>
+
+        <aside className="customization-preview">
+          <section className="content-panel preview-card">
+            <div className="preview-card-header"><span>Live zero-cost preview</span><span className="memory-badge"><LockKeyhole /> No AI call</span></div>
+            <div className="preview-question"><MessageCircle /><span><small>Audience asks</small>How often should I publish?</span></div>
+            <div className="preview-answer"><div className="agent-avatar"><Sparkles /></div><div><small>{STYLE_PRESETS.find((preset) => preset.id === stylePreset)?.name} · {responseLength}</small><p>{preview}</p><button type="button" className="citation"><FileText /><span><strong>The Sustainable Content System</strong><small>Section 1</small></span><ChevronRight /></button></div></div>
+            <div className="knowledge-lock"><ShieldCheck /><span><strong>Knowledge unchanged</strong>Only phrasing and depth change. The cited source remains the same.</span></div>
+          </section>
+          <button className="button primary save-customization" type="submit"><Check /> Save customization as v{agent.version + 1}</button>
+        </aside>
+      </form>
     </div>
   );
 }

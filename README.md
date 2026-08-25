@@ -30,9 +30,10 @@ npm run check  # Typecheck, test, and production build
 
 1. Add a source and choose **Preview only** or **Public answers**.
 2. Open the audience preview and ask one of the suggested questions.
-3. Switch between Maya, Theo, and Jules to see isolated conversations.
-4. Open **Load lab** and change traffic, concurrency, and queue limits.
-5. Observe bounded rejection when a popular agent exceeds safe capacity.
+3. Open **Customize** and change voice preset, response depth, signature phrases, or boundaries.
+4. Switch between Maya, Theo, and Jules to see isolated conversations.
+5. Open **Load lab** and change traffic, concurrency, and queue limits.
+6. Observe bounded rejection when a popular agent exceeds safe capacity.
 
 All simulator state is held in memory and resets on refresh. Pasted content remains in the browser process and is not uploaded.
 
@@ -157,6 +158,7 @@ The next production increment will add the actual mobile/API/worker packages aft
 ## Key documentation
 
 - [Product and technical design](docs/DESIGN.md)
+- [Creator customization model](docs/CUSTOMIZATION.md)
 - [Bring Your Own Agent routing contract](docs/AGENT_ROUTING.md)
 
 ## Contributing

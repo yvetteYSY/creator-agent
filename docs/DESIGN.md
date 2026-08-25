@@ -66,6 +66,8 @@ Creator Agent should make a creator's existing library conversational without pr
 9. Citations that resolve to document passages or media timestamps.
 10. Source removal, account deletion, abuse reporting, and basic moderation.
 
+Customization is versioned independently from source content. Voice preset, response depth, signature language, prohibited topics, greeting, and behavioral boundaries shape delivery, while retrieval continues to determine factual content. See [CUSTOMIZATION.md](CUSTOMIZATION.md).
+
 ### Deferred capabilities
 
 - URL and social-platform imports that require third-party permissions

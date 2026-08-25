@@ -42,6 +42,24 @@ describe("Creator Agent simulator", () => {
     expect(screen.getByText("Graceful overload active")).toBeTruthy();
   });
 
+  it("previews and saves creator style changes without an AI call", () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+    render(<App />);
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Customize" })[0]);
+    fireEvent.click(screen.getByRole("radio", { name: /direct strategist/i }));
+    fireEvent.click(screen.getByRole("radio", { name: "Short" }));
+    fireEvent.change(screen.getByRole("textbox", { name: /signature phrases/i }), {
+      target: { value: "Ship the useful version." },
+    });
+
+    expect(screen.getByText(/Start here: Publish one durable idea each week. Ship the useful version./i)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /save customization as v3/i }));
+    expect(screen.getByText(/customization saved as a new agent version/i)).toBeTruthy();
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
   it("routes to an explicitly activated user endpoint without exposing private sources", async () => {
     const fetchSpy = vi.fn(async (_url: URL | RequestInfo, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body));
