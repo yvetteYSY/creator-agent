@@ -8,11 +8,15 @@ build/
 .expo/
 .next/
 coverage/
+*.tsbuildinfo
 
 # Local configuration and secrets
 .env
 .env.*
 !.env.example
+apps/*/.env
+apps/*/.env.*
+!apps/*/.env.example
 
 # Logs and temporary files
 *.log

@@ -31,6 +31,17 @@ function createPublishedFixture() {
 }
 
 describe("CreatorAgentEngine", () => {
+  it("rejects cross-creator access at the engine boundary", () => {
+    const { engine, agent, publicSource } = createPublishedFixture();
+
+    expect(() => engine.listSources("creator-b", agent.id)).toThrowError(/belongs to another creator/i);
+    expect(() => engine.updateAgent("creator-b", agent.id, { name: "Hijacked" }))
+      .toThrowError(/belongs to another creator/i);
+    expect(() => engine.setSourceVisibility("creator-b", publicSource.id, "preview"))
+      .toThrowError(/another creator/i);
+    expect(engine.getAgent(agent.id).name).toBe(agent.name);
+  });
+
   it("requires an approved ready source before publishing", () => {
     const engine = new CreatorAgentEngine();
     const agent = engine.createAgent({

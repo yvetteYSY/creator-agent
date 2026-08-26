@@ -12,6 +12,7 @@ The simulator is intentionally deterministic and local. **It makes no AI-provide
 
 | Capability | Current implementation |
 | --- | --- |
+| Managed creator authentication | Auth0 Universal Login uses OIDC Authorization Code with PKCE, in-memory token caching, stable `sub` identity, and login/logout/error states. Tenant configuration is required to exercise real login. |
 | Creator studio | A seeded creator can manage an agent and its knowledge sources in a responsive web interface. |
 | Text ingestion | Document or audio-transcript text can be pasted, chunked, and indexed in browser memory. |
 | Direct video selection | MP4, WebM, and QuickTime files up to 250 MB can be selected and staged locally. Only metadata is retained; the file is not uploaded. |
@@ -31,7 +32,7 @@ The simulator is intentionally deterministic and local. **It makes no AI-provide
 
 - State is held in memory and resets when the page refreshes.
 - The interface is a mobile-responsive web simulator, not yet an Expo/React Native app.
-- There is no production sign-in, database, object storage, job queue, or deployment.
+- The managed Auth0 client is implemented, but there is not yet a protected Creator Agent API, database, object storage, job queue, or deployment.
 - Direct video bytes are not uploaded, decoded, transcribed, embedded, or stored.
 - Pasted text uses deterministic term matching rather than model-based embeddings or generation.
 - A real user-owned endpoint may create costs for its owner; Creator Agent never silently uses a platform or developer AI key.
@@ -46,6 +47,8 @@ npm run dev
 ```
 
 Open `http://127.0.0.1:4173`.
+
+Development defaults to an explicit local session. To exercise managed OIDC, configure an Auth0 Single Page Application using the [authentication setup guide](docs/AUTHENTICATION.md). Production builds reject local authentication and fail closed when Auth0 configuration is missing.
 
 Useful checks:
 
@@ -84,7 +87,7 @@ To connect a real user-owned agent, replace the local URL with an HTTPS endpoint
 
 ## Not yet implemented
 
-- Creator and audience authentication
+- Audience authentication and server-side access-token validation
 - Durable agent, source, configuration, and conversation persistence
 - Signed uploads to private object storage
 - File-signature validation, malware scanning, and parser sandboxing
@@ -101,7 +104,7 @@ Keep the current deterministic simulator as a zero-cost product demo and regress
 
 ### Iteration 1 — Durable creator workspace
 
-1. Add managed OIDC authentication.
+1. Connect the managed OIDC client to a protected API and durable user record.
 2. Add PostgreSQL migrations for users, agents, agent versions, sources, and source visibility.
 3. Enforce resource-level authorization and tenant isolation in every API query.
 4. Persist creator configuration while leaving deterministic chat in place.
@@ -187,6 +190,7 @@ creator-agent/
 │   └── core/            # Deterministic domain engine and load simulator
 ├── docs/
 │   ├── AGENT_ROUTING.md # Bring Your Own Agent protocol and data boundary
+│   ├── AUTHENTICATION.md # Auth0 OIDC setup and security boundary
 │   ├── CUSTOMIZATION.md # Knowledge/style separation and evaluation
 │   └── DESIGN.md        # Product, architecture, privacy, and scale design
 ├── package.json         # npm workspace scripts
@@ -199,8 +203,8 @@ The next production increment will add the actual mobile/API/worker packages aft
 
 ### Milestone 0 — Foundation
 
-- **Available:** npm workspace, deterministic core, responsive simulator, local reference endpoint, automated checks
-- **Next:** CI, database migrations, authentication, persisted agent/source APIs, audit events
+- **Available:** npm workspace, deterministic core, responsive simulator, Auth0 SPA integration, local reference endpoint, automated checks
+- **Next:** CI, database migrations, API token verification, persisted agent/source APIs, audit events
 
 ### Milestone 1 — Ingestion
 
@@ -228,6 +232,7 @@ The next production increment will add the actual mobile/API/worker packages aft
 ## Key documentation
 
 - [Product and technical design](docs/DESIGN.md)
+- [Managed Auth0 authentication](docs/AUTHENTICATION.md)
 - [Creator customization model](docs/CUSTOMIZATION.md)
 - [Bring Your Own Agent routing contract](docs/AGENT_ROUTING.md)
 

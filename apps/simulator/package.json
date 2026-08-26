@@ -9,6 +9,7 @@
     "preview": "vite preview --host 127.0.0.1"
   },
   "dependencies": {
+    "@auth0/auth0-react": "^2.24.1",
     "@creator-agent/core": "*",
     "lucide-react": "^1.34.0",
     "react": "^19.2.8",

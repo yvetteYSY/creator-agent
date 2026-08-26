@@ -2,6 +2,11 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
+import { LocalAuthProvider } from "./auth";
+
+function renderApp() {
+  return render(<LocalAuthProvider initialAuthenticated><App /></LocalAuthProvider>);
+}
 
 afterEach(() => {
   cleanup();
@@ -10,7 +15,7 @@ afterEach(() => {
 
 describe("Creator Agent simulator", () => {
   it("shows source privacy controls and opens the isolated audience preview", () => {
-    render(<App />);
+    renderApp();
 
     expect(screen.getByText("Private by default")).toBeTruthy();
     expect(screen.getByText("Unreleased launch notes")).toBeTruthy();
@@ -22,7 +27,7 @@ describe("Creator Agent simulator", () => {
   it("answers a suggested question with a citation", () => {
     const fetchSpy = vi.fn();
     vi.stubGlobal("fetch", fetchSpy);
-    render(<App />);
+    renderApp();
     fireEvent.click(screen.getByRole("button", { name: /open audience preview/i }));
     fireEvent.click(screen.getByRole("button", { name: /how often should i publish/i }));
 
@@ -32,7 +37,7 @@ describe("Creator Agent simulator", () => {
   });
 
   it("updates load results when traffic increases", () => {
-    render(<App />);
+    renderApp();
     const loadButtons = screen.getAllByRole("button", { name: /load/i });
     fireEvent.click(loadButtons[0]);
     const userSlider = screen.getByRole("slider", { name: /active audience members/i });
@@ -45,7 +50,7 @@ describe("Creator Agent simulator", () => {
   it("previews and saves creator style changes without an AI call", () => {
     const fetchSpy = vi.fn();
     vi.stubGlobal("fetch", fetchSpy);
-    render(<App />);
+    renderApp();
 
     fireEvent.click(screen.getAllByRole("button", { name: "Customize" })[0]);
     fireEvent.click(screen.getByRole("radio", { name: /direct strategist/i }));
@@ -63,7 +68,7 @@ describe("Creator Agent simulator", () => {
   it("stages a video file locally without uploading or claiming it is ready", () => {
     const fetchSpy = vi.fn();
     vi.stubGlobal("fetch", fetchSpy);
-    render(<App />);
+    renderApp();
 
     fireEvent.click(screen.getByRole("button", { name: /add source/i }));
     fireEvent.change(screen.getByLabelText(/content type/i), { target: { value: "video" } });
@@ -94,7 +99,7 @@ describe("Creator Agent simulator", () => {
       );
     });
     vi.stubGlobal("fetch", fetchSpy);
-    render(<App />);
+    renderApp();
 
     fireEvent.click(screen.getAllByRole("button", { name: "Route" })[0]);
     fireEvent.click(screen.getByRole("radio", { name: /user-owned agent endpoint/i }));

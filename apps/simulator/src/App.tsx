@@ -11,6 +11,7 @@ import {
   Film,
   FlaskConical,
   LockKeyhole,
+  LogOut,
   MessageCircle,
   Mic2,
   Palette,
@@ -36,6 +37,7 @@ import {
   type SourceVisibility,
   type StylePreset,
 } from "@creator-agent/core";
+import { useCreatorAuth } from "./auth";
 
 type View = "studio" | "customize" | "preview" | "routing" | "load";
 type AudienceId = "maya" | "theo" | "jules";
@@ -49,9 +51,8 @@ const AUDIENCE: Array<{ id: AudienceId; name: string; color: string }> = [
   { id: "jules", name: "Jules", color: "gold" },
 ];
 
-function createRuntime() {
+function createRuntime(ownerId: string) {
   const engine = new CreatorAgentEngine();
-  const ownerId = "creator-demo";
   const agent = engine.createAgent({
     ownerId,
     name: "Ari's Creative Coach",
@@ -117,7 +118,8 @@ function formatBytes(bytes: number) {
 }
 
 export function App() {
-  const runtime = useMemo(createRuntime, []);
+  const auth = useCreatorAuth();
+  const runtime = useMemo(() => createRuntime(auth.user!.id), [auth.user!.id]);
   const [view, setView] = useState<View>("studio");
   const [route, setRoute] = useState<AgentRoute>({ mode: "local" });
   const [revision, setRevision] = useState(0);
@@ -160,7 +162,12 @@ export function App() {
             {route.mode === "local" ? <LockKeyhole aria-hidden="true" /> : <Cable aria-hidden="true" />}
             {route.mode === "local" ? "Local · $0 AI spend" : "User-owned route"}
           </span>
-          <div className="creator-avatar" aria-label="Signed in as Ari">AR</div>
+          <span className="auth-label">{auth.mode === "local" ? "Local session" : "Auth0"}</span>
+          <div className="creator-account">
+            {auth.user!.picture ? <img className="creator-avatar" src={auth.user!.picture} alt="" referrerPolicy="no-referrer" /> : <span className="creator-avatar" aria-hidden="true">{auth.user!.initials}</span>}
+            <span className="creator-account-copy"><strong>{auth.user!.name}</strong><small>{auth.user!.email ?? "OIDC account"}</small></span>
+            <button className="sign-out" type="button" onClick={() => void auth.logout()} aria-label={`Sign out ${auth.user!.name}`}><LogOut /></button>
+          </div>
         </div>
       </header>
 
