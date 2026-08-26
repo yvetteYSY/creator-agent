@@ -31,6 +31,7 @@ The default simulator is intentionally deterministic and local. **It makes no AI
 | Local agent endpoint | A deterministic HTTP reference agent supports real browser-to-endpoint testing and reports `aiCalls: 0`. |
 | Load lab | Adjustable traffic, concurrency, and queue limits demonstrate tenant-aware capacity and graceful overload. |
 | Deletion | Deleting a source immediately removes its chunks from retrieval in the simulator. |
+| Durable storage cleanup | API deletion tombstones durable metadata before removing the object and records physical completion. A zero-AI lease-based reconciler retries tombstoned objects after transient storage failures. |
 | Automated validation | Core, UI, routing, privacy, idempotency, upload-validation, and load tests run through `npm test`; `npm run check` also typechecks and builds every workspace. |
 | Continuous integration | A read-only, secret-free GitHub Actions workflow runs locked installation, typecheck, tests, production build, and production dependency audit on `main` and pull requests. |
 
@@ -62,6 +63,7 @@ Useful checks:
 npm test       # Core privacy, retrieval, idempotency, load, and UI tests
 npm run check  # Typecheck, test, and production build
 npm run scan:once # Claim and preliminarily validate at most one durable upload; requires API DB/storage env
+npm run cleanup:once # Reconcile at most one tombstoned stored object; requires API DB/storage env
 ```
 
 ### What to try
@@ -96,7 +98,7 @@ To connect a real user-owned agent, replace the local URL with an HTTPS endpoint
 
 - Audience authentication
 - Durable conversation persistence
-- Upload retries, orphan cleanup, resumable/multipart upload, and an auditable deletion worker
+- Upload retries, resumable/multipart upload, deletion audit events, and retention-policy verification
 - Full media/container validation, duration/codec limits, malware scanning, and parser sandboxing
 - PDF, Markdown, and plain-text file extraction
 - Real audio/video transcription and timestamped transcript review
@@ -222,7 +224,8 @@ The next production increment is a sandboxed media-inspection/malware worker tha
 
 - **Available:** local video staging plus configured private direct MP4 upload with exact-size/type enforcement and safe non-ready state
 - **Available:** preliminary bounded MP4 `ftyp` validation with invalid-object deletion
-- **Next:** full validation, malware scanning, real transcription, transcript review, retry, and durable deletion reconciliation
+- **Available:** tombstone-first object deletion with lease-based retry reconciliation
+- **Next:** full validation, malware scanning, real transcription, transcript review, upload retry, and deletion audit events
 
 ### Milestone 2 — Grounded chat
 

@@ -91,6 +91,7 @@ export interface WorkspaceRepository {
   markSourceUploaded(ownerId: string, agentId: string, sourceId: string): Promise<SourceRecord>;
   markSourceFailed(ownerId: string, agentId: string, sourceId: string): Promise<SourceRecord>;
   deleteSource(ownerId: string, agentId: string, sourceId: string): Promise<{ storageKey?: string }>;
+  markSourceStorageDeleted(ownerId: string, agentId: string, sourceId: string): Promise<void>;
 }
 
 export class WorkspaceRecordNotFoundError extends Error {}
@@ -471,13 +472,27 @@ export class PostgresWorkspaceRepository implements WorkspaceRepository {
   async deleteSource(ownerId: string, agentId: string, sourceId: string) {
     const result = await this.pool.query<{ storage_key: string | null }>(
       `UPDATE sources
-       SET status = 'deleting', visibility = 'disabled', deleted_at = now(), updated_at = now()
+       SET status = 'deleting', visibility = 'disabled', deleted_at = now(),
+         scan_lease_id = NULL, updated_at = now()
        WHERE owner_id = $1 AND agent_id = $2 AND id = $3 AND deleted_at IS NULL
        RETURNING storage_key`,
       [ownerId, agentId, sourceId],
     );
     if (!result.rows[0]) throw new WorkspaceRecordNotFoundError("Source not found.");
     return result.rows[0].storage_key ? { storageKey: result.rows[0].storage_key } : {};
+  }
+
+  async markSourceStorageDeleted(ownerId: string, agentId: string, sourceId: string) {
+    const result = await this.pool.query(
+      `UPDATE sources
+       SET storage_deleted_at = now(), deletion_lease_id = NULL,
+         deletion_failure_code = NULL, updated_at = now()
+       WHERE owner_id = $1 AND agent_id = $2 AND id = $3
+         AND deleted_at IS NOT NULL AND storage_key IS NOT NULL
+       RETURNING id`,
+      [ownerId, agentId, sourceId],
+    );
+    if (!result.rows[0]) throw new WorkspaceRecordNotFoundError("Deleted source not found.");
   }
 }
 

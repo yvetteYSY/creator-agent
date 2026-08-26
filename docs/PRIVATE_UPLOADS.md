@@ -43,6 +43,7 @@ The bucket must be private and its browser CORS policy should allow only the exa
 - Object reads request and enforce a maximum 4 KB range; a provider that returns more fails closed.
 - Stored objects and metadata are not returned by public or preview chat.
 - Source deletion tombstones it for serving before deleting its stored object.
+- Successful synchronous deletion records `storage_deleted_at`; a failed storage call returns `202` with `pendingCleanup: true`, remains tombstoned, and is eligible for the exclusive `npm run cleanup:once` reconciler.
 - Unit tests cover owner isolation, malformed metadata, unavailable storage, mismatch cleanup, and bearer-token separation.
 - Opt-in integration tests prove accepted upload, exact-size rejection, metadata inspection, and deletion against a real S3-compatible service.
 
@@ -50,6 +51,6 @@ The bucket must be private and its browser CORS policy should allow only the exa
 
 Do not treat `uploaded` or `processing` as trusted/ready content. The current `ftyp` check establishes only that a small prefix resembles a supported ISO Base Media File Format container; it does not prove that the full file is safe, decodable, complete, or truly contains the declared media. The next sandboxed boundary must fully parse the container, detect the real media type, enforce duration and codec limits, run malware scanning, calculate a checksum, and quarantine failures before transcription. It must be idempotent and must never make content `ready` automatically.
 
-The current synchronous delete is safe for serving because it tombstones metadata first, but production still needs an outbox-backed deletion worker, retries, orphan reconciliation, audit events, lifecycle policies, backup expiry, and a visible deletion service-level target. Multipart/resumable upload and abandoned-policy cleanup are also future work.
+The current delete path is safe for serving because it tombstones metadata first, and its one-shot reconciler provides retryable physical object removal with stale-lease recovery. Production still needs continuous scheduling, alerting after the 100-attempt ceiling, immutable audit events, lifecycle-policy/orphan verification, backup expiry, and a visible deletion service-level target. Multipart/resumable upload and abandoned-policy cleanup are also future work.
 
 No transcription provider is configured. A future processor must be explicitly selected by the creator or separately funded by the platform, receive only the minimum required content, publish retention/no-training terms, and never silently fall back to a developer's personal AI account.

@@ -45,6 +45,7 @@ class MemoryWorkspace implements WorkspaceRepository {
   readonly agents = new Map<string, AgentRecord>();
   readonly sources = new Map<string, SourceRecord>();
   readonly uploads = new Map<string, UploadSourceRecord>();
+  readonly storageDeleted = new Set<string>();
 
   async listAgents(ownerId: string) {
     return [...this.agents.values()].filter((agent) => agent.ownerId === ownerId);
@@ -204,6 +205,10 @@ class MemoryWorkspace implements WorkspaceRepository {
     this.uploads.delete(sourceId);
     return storageKey ? { storageKey } : {};
   }
+
+  async markSourceStorageDeleted(_ownerId: string, _agentId: string, sourceId: string) {
+    this.storageDeleted.add(sourceId);
+  }
 }
 
 class MemoryObjectStorage implements ObjectStorage {
@@ -212,6 +217,7 @@ class MemoryObjectStorage implements ObjectStorage {
   readonly objects = new Map<string, StoredObjectMetadata>();
   readonly deleted: string[] = [];
   readonly inspected: string[] = [];
+  deleteError?: Error;
 
   async createUpload(input: {
     key: string;
@@ -238,6 +244,7 @@ class MemoryObjectStorage implements ObjectStorage {
   }
 
   async deleteObject(key: string) {
+    if (this.deleteError) throw this.deleteError;
     this.objects.delete(key);
     this.deleted.push(key);
   }
@@ -400,6 +407,35 @@ describe("durable creator workspace API", () => {
       body: { source: { status: "uploaded", visibility: "preview" } },
     });
     expect(storage.inspected).toEqual([storage.policies[0].key]);
+    expect(await handleApiRequest(request(
+      "DELETE",
+      `/v1/agents/${AGENT_A}/sources/${SOURCE_A}`,
+    ), deps)).toEqual({ status: 200, body: { deleted: true } });
+    expect(storage.deleted).toEqual([storage.policies[0].key]);
+    expect(workspace.storageDeleted).toEqual(new Set([SOURCE_A]));
+  });
+
+  it("keeps a source tombstoned and reports accepted cleanup when storage deletion is transiently unavailable", async () => {
+    const creators = new MemoryCreators();
+    const workspace = new MemoryWorkspace();
+    const storage = new MemoryObjectStorage();
+    const deps = dependencies("auth0|creator-a", creators, workspace, undefined, storage);
+    await handleApiRequest(request("POST", "/v1/agents", { name: "Coach" }), deps);
+    await handleApiRequest(request(
+      "POST",
+      `/v1/agents/${AGENT_A}/sources/uploads`,
+      { title: "Private workshop", fileName: "workshop.mp4", contentType: "video/mp4", size: 1024 },
+    ), deps);
+    storage.deleteError = new Error("temporary storage failure");
+    expect(await handleApiRequest(request(
+      "DELETE",
+      `/v1/agents/${AGENT_A}/sources/${SOURCE_A}`,
+    ), deps)).toEqual({
+      status: 202,
+      body: { deleted: true, pendingCleanup: true },
+    });
+    expect(workspace.sources.has(SOURCE_A)).toBe(false);
+    expect(workspace.storageDeleted.has(SOURCE_A)).toBe(false);
   });
 
   it("fails closed for unconfigured storage, invalid video metadata, and mismatched objects", async () => {

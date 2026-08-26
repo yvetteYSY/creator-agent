@@ -17,7 +17,7 @@ The API resolves a signed-in Auth0 identity to a durable internal creator record
 | `POST /v1/agents/:agentId/sources/uploads` | `write:agent` | Authorize one private direct MP4 upload |
 | `POST /v1/agents/:agentId/sources/:sourceId/complete` | `write:agent` | Verify stored size/type and mark the source uploaded |
 | `PATCH /v1/agents/:agentId/sources/:sourceId` | `write:agent` | Change source visibility; public requires ready status |
-| `DELETE /v1/agents/:agentId/sources/:sourceId` | `write:agent` | Tombstone metadata and disable serving immediately |
+| `DELETE /v1/agents/:agentId/sources/:sourceId` | `write:agent` | Tombstone immediately; return `200` after object deletion or `202` when durable cleanup remains pending |
 
 No route accepts an owner identifier. The API derives ownership only after verifying the token signature, exact issuer, API audience, expiration, `RS256` algorithm, subject, and required permission against the configured Auth0 tenant's JWKS. Agent and source SQL queries include the resulting internal owner UUID; another creator receives the same generic `404` as a nonexistent resource.
 
@@ -62,9 +62,10 @@ To claim and preliminarily scan one completed upload without any AI call:
 
 ```bash
 npm run scan:once
+npm run cleanup:once
 ```
 
-The one-shot command uses the same server-only database/storage configuration, prints only opaque job metadata plus `aiCalls: 0`, and exits after one source or an idle result. Run it from a controlled scheduler only after migration 005. It does not perform malware scanning or transcription.
+Both one-shot commands use the same server-only database/storage configuration, print only opaque job metadata plus `aiCalls: 0`, and exit after one source or an idle result. `scan:once` requires migration 005; `cleanup:once` requires migration 006 and reconciles physical deletion for already tombstoned sources. Run them from a controlled scheduler. Neither invokes an AI provider.
 
 The API listens on `http://127.0.0.1:4320`. Set `VITE_CREATOR_API_URL=http://127.0.0.1:4320` in the simulator's `.env.local`, restart the simulator, and complete Auth0 login.
 
@@ -77,7 +78,7 @@ The identity and workspace tables store:
 - Creation and last-seen timestamps
 - A deletion timestamp when access is revoked
 - Agent name, description, draft/publication state, and immutable configuration versions
-- Source title, media type, processing status, private/public/disabled visibility, opaque storage key, expected content type/size, upload-policy expiry, preliminary scan lease/attempt/timestamps, detected type, and bounded failure code
+- Source title, media type, processing status, private/public/disabled visibility, opaque storage key, expected content type/size, upload-policy expiry, preliminary scan state, and storage-deletion completion/lease/attempt state
 
 PostgreSQL does not store access tokens, passwords, email addresses, display names, profile images, uploaded bytes, transcripts, extracted text, storage credentials, or AI-provider credentials. Uploaded bytes live only in the configured private object store. A unique `(auth_issuer, auth_subject)` constraint provides stable mapping under concurrent logins. A deleted identity is not automatically reactivated.
 

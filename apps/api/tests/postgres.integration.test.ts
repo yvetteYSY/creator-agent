@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Pool } from "pg";
 import { PostgresCreatorRepository } from "../src/creator-store";
+import { PostgresStorageDeletionRepository } from "../src/cleanup-store";
 import { PostgresScanRepository } from "../src/scanner-store";
 import {
   PostgresWorkspaceRepository,
@@ -21,6 +22,7 @@ suite("PostgreSQL creator workspace integration", () => {
       "003_agent_customization.sql",
       "004_private_uploads.sql",
       "005_quarantine_scanning.sql",
+      "006_storage_deletion_reconciliation.sql",
     ]) {
       const sql = await readFile(new URL(`../migrations/${migration}`, import.meta.url), "utf8");
       await pool!.query(sql);
@@ -114,6 +116,51 @@ suite("PostgreSQL creator workspace integration", () => {
       .rejects.toThrowError(WorkspaceRecordNotFoundError);
     await expect(workspace.deleteSource(ownerA.id, agent.id, source.id))
       .resolves.toEqual({ storageKey: "private-uploads/postgres-integration" });
+    const cleanup = new PostgresStorageDeletionRepository(pool!);
+    const deletionJob = await cleanup.claimNext({
+      staleBefore: new Date("2026-08-25T00:00:00.000Z"),
+      maxAttempts: 100,
+    });
+    expect(deletionJob).toMatchObject({
+      sourceId: source.id,
+      storageKey: "private-uploads/postgres-integration",
+      attempt: 1,
+    });
+    await expect(cleanup.claimNext({
+      staleBefore: new Date("2026-08-25T00:00:00.000Z"),
+      maxAttempts: 100,
+    })).resolves.toBeNull();
+    await expect(cleanup.complete({
+      ...deletionJob!,
+      leaseId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+    })).resolves.toBe(false);
+    await expect(cleanup.complete(deletionJob!)).resolves.toBe(true);
+
+    const scanningSource = await workspace.createSource(ownerA.id, agent.id, {
+      title: "Delete during scan",
+      type: "video",
+      upload: {
+        storageKey: "private-uploads/delete-during-scan",
+        contentType: "video/mp4",
+        size: 24,
+        expiresAt: "2026-08-25T12:00:00.000Z",
+      },
+    });
+    await workspace.markSourceUploaded(ownerA.id, agent.id, scanningSource.id);
+    const cancelledScan = await scanner.claimNext({
+      staleBefore: new Date("2026-08-25T00:00:00.000Z"),
+      maxAttempts: 3,
+    });
+    expect(cancelledScan?.sourceId).toBe(scanningSource.id);
+    await expect(workspace.deleteSource(ownerA.id, agent.id, scanningSource.id))
+      .resolves.toEqual({ storageKey: "private-uploads/delete-during-scan" });
+    await expect(scanner.complete(cancelledScan!, "video/mp4")).resolves.toBe(false);
+    const cancelledCleanup = await cleanup.claimNext({
+      staleBefore: new Date("2026-08-25T00:00:00.000Z"),
+      maxAttempts: 100,
+    });
+    expect(cancelledCleanup?.sourceId).toBe(scanningSource.id);
+    await expect(cleanup.complete(cancelledCleanup!)).resolves.toBe(true);
     expect(await workspace.listSources(ownerA.id, agent.id)).toEqual([]);
   });
 });

@@ -145,7 +145,14 @@ export async function handleApiRequest(
       const agentId = resourceId(sourceItem[1], "agent ID");
       const sourceId = resourceId(sourceItem[2], "source ID");
       const deleted = await dependencies.workspace.deleteSource(creator.id, agentId, sourceId);
-      if (deleted.storageKey) await availableStorage(dependencies.storage).deleteObject(deleted.storageKey);
+      if (deleted.storageKey) {
+        try {
+          await availableStorage(dependencies.storage).deleteObject(deleted.storageKey);
+          await dependencies.workspace.markSourceStorageDeleted(creator.id, agentId, sourceId);
+        } catch {
+          return { status: 202, body: { deleted: true, pendingCleanup: true } };
+        }
+      }
       return { status: 200, body: { deleted: true } };
     }
     if (sourceItem && request.method === "PATCH") {
