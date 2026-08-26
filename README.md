@@ -6,13 +6,15 @@ Creator Agent is a mobile-first platform that lets content creators build an AI 
 
 The repository contains a test-first, responsive web MVP simulator. It demonstrates the product, privacy, routing, and concurrency behavior before introducing paid AI providers or production infrastructure.
 
-The simulator is intentionally deterministic and local. **It makes no AI-provider or external API calls, consumes no AI tokens, and cannot create model charges.** It is a product and system-behavior prototype, not a production RAG implementation.
+The default simulator is intentionally deterministic and local. **It makes no AI-provider calls, consumes no AI tokens, and cannot create model charges.** Managed Auth0 mode explicitly connects to Auth0 and the protected Creator Agent API, but neither path invokes an AI provider.
 
 ### Available now
 
 | Capability | Current implementation |
 | --- | --- |
 | Managed creator authentication | Auth0 Universal Login uses OIDC Authorization Code with PKCE, in-memory token caching, stable `sub` identity, and login/logout/error states. Tenant configuration is required to exercise real login. |
+| Protected creator API | `GET /v1/me` validates Auth0 JWT signature, issuer, audience, expiration, `RS256`, subject, and `read:creator` permission before returning an internal creator ID. |
+| Durable creator identity | PostgreSQL maps verified `(issuer, sub)` values to an opaque internal UUID without storing profile data or access tokens. |
 | Creator studio | A seeded creator can manage an agent and its knowledge sources in a responsive web interface. |
 | Text ingestion | Document or audio-transcript text can be pasted, chunked, and indexed in browser memory. |
 | Direct video selection | MP4, WebM, and QuickTime files up to 250 MB can be selected and staged locally. Only metadata is retained; the file is not uploaded. |
@@ -32,7 +34,7 @@ The simulator is intentionally deterministic and local. **It makes no AI-provide
 
 - State is held in memory and resets when the page refreshes.
 - The interface is a mobile-responsive web simulator, not yet an Expo/React Native app.
-- The managed Auth0 client is implemented, but there is not yet a protected Creator Agent API, database, object storage, job queue, or deployment.
+- The protected API currently exposes only health and creator-identity endpoints. Agent content is still browser-memory state; durable agent/source storage, object storage, job queues, and deployment are not implemented.
 - Direct video bytes are not uploaded, decoded, transcribed, embedded, or stored.
 - Pasted text uses deterministic term matching rather than model-based embeddings or generation.
 - A real user-owned endpoint may create costs for its owner; Creator Agent never silently uses a platform or developer AI key.
@@ -48,7 +50,7 @@ npm run dev
 
 Open `http://127.0.0.1:4173`.
 
-Development defaults to an explicit local session. To exercise managed OIDC, configure an Auth0 Single Page Application using the [authentication setup guide](docs/AUTHENTICATION.md). Production builds reject local authentication and fail closed when Auth0 configuration is missing.
+Development defaults to an explicit local session. To exercise managed OIDC, configure an Auth0 Single Page Application, custom API, and PostgreSQL identity store using the [authentication setup guide](docs/AUTHENTICATION.md) and [API guide](docs/API.md). Production builds reject local authentication and fail closed when Auth0 or API configuration is missing.
 
 Useful checks:
 
@@ -87,7 +89,7 @@ To connect a real user-owned agent, replace the local URL with an HTTPS endpoint
 
 ## Not yet implemented
 
-- Audience authentication and server-side access-token validation
+- Audience authentication
 - Durable agent, source, configuration, and conversation persistence
 - Signed uploads to private object storage
 - File-signature validation, malware scanning, and parser sandboxing
@@ -104,8 +106,8 @@ Keep the current deterministic simulator as a zero-cost product demo and regress
 
 ### Iteration 1 — Durable creator workspace
 
-1. Connect the managed OIDC client to a protected API and durable user record.
-2. Add PostgreSQL migrations for users, agents, agent versions, sources, and source visibility.
+1. **Available:** connect the managed OIDC client to a protected API and durable user record.
+2. Add PostgreSQL migrations for agents, agent versions, sources, and source visibility.
 3. Enforce resource-level authorization and tenant isolation in every API query.
 4. Persist creator configuration while leaving deterministic chat in place.
 
@@ -184,12 +186,14 @@ The architecture is intentionally provider-neutral. AI and storage services shou
 ```text
 creator-agent/
 ├── apps/
+│   ├── api/             # Auth0-protected API and creator identity migration
 │   ├── local-agent/     # Zero-cost HTTP reference endpoint
 │   └── simulator/       # Responsive React MVP and UI tests
 ├── packages/
 │   └── core/            # Deterministic domain engine and load simulator
 ├── docs/
 │   ├── AGENT_ROUTING.md # Bring Your Own Agent protocol and data boundary
+│   ├── API.md           # Protected API setup and identity data boundary
 │   ├── AUTHENTICATION.md # Auth0 OIDC setup and security boundary
 │   ├── CUSTOMIZATION.md # Knowledge/style separation and evaluation
 │   └── DESIGN.md        # Product, architecture, privacy, and scale design
@@ -197,14 +201,14 @@ creator-agent/
 └── README.md
 ```
 
-The next production increment will add the actual mobile/API/worker packages after provider, hosting, privacy, and beta-cohort decisions are made. The deterministic core remains useful for product demos and fast policy regression tests.
+The next production increment will persist agents and sources behind resource-scoped API queries. The actual mobile and worker packages still wait on provider, hosting, privacy, and beta-cohort decisions. The deterministic core remains useful for product demos and fast policy regression tests.
 
 ## Delivery milestones
 
 ### Milestone 0 — Foundation
 
-- **Available:** npm workspace, deterministic core, responsive simulator, Auth0 SPA integration, local reference endpoint, automated checks
-- **Next:** CI, database migrations, API token verification, persisted agent/source APIs, audit events
+- **Available:** npm workspace, deterministic core, responsive simulator, Auth0 SPA integration, protected creator API, durable identity migration, local reference endpoint, automated checks
+- **Next:** CI, persisted agent/source APIs, resource-level authorization, audit events
 
 ### Milestone 1 — Ingestion
 
@@ -233,6 +237,7 @@ The next production increment will add the actual mobile/API/worker packages aft
 
 - [Product and technical design](docs/DESIGN.md)
 - [Managed Auth0 authentication](docs/AUTHENTICATION.md)
+- [Protected API and durable identity](docs/API.md)
 - [Creator customization model](docs/CUSTOMIZATION.md)
 - [Bring Your Own Agent routing contract](docs/AGENT_ROUTING.md)
 

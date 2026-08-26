@@ -34,7 +34,7 @@ describe("managed OIDC configuration", () => {
     const configuration = resolveAuthConfiguration({}, false);
 
     expect(configuration.mode).toBe("auth0");
-    expect(configuration.error).toMatch(/domain.*client/i);
+    expect(configuration.error).toMatch(/domain.*client.*audience/i);
   });
 
   it("accepts public Auth0 SPA settings without a client secret", () => {

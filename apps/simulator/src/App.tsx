@@ -38,6 +38,7 @@ import {
   type StylePreset,
 } from "@creator-agent/core";
 import { useCreatorAuth } from "./auth";
+import { useCreatorWorkspace } from "./creator-workspace";
 
 type View = "studio" | "customize" | "preview" | "routing" | "load";
 type AudienceId = "maya" | "theo" | "jules";
@@ -119,7 +120,8 @@ function formatBytes(bytes: number) {
 
 export function App() {
   const auth = useCreatorAuth();
-  const runtime = useMemo(() => createRuntime(auth.user!.id), [auth.user!.id]);
+  const workspace = useCreatorWorkspace();
+  const runtime = useMemo(() => createRuntime(workspace.creatorId!), [workspace.creatorId]);
   const [view, setView] = useState<View>("studio");
   const [route, setRoute] = useState<AgentRoute>({ mode: "local" });
   const [revision, setRevision] = useState(0);

@@ -3,9 +3,16 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 import { LocalAuthProvider } from "./auth";
+import { CreatorWorkspaceProvider, RequireCreatorWorkspace } from "./creator-workspace";
 
 function renderApp() {
-  return render(<LocalAuthProvider initialAuthenticated><App /></LocalAuthProvider>);
+  return render(
+    <LocalAuthProvider initialAuthenticated>
+      <CreatorWorkspaceProvider configuration={{ mode: "local" }}>
+        <RequireCreatorWorkspace><App /></RequireCreatorWorkspace>
+      </CreatorWorkspaceProvider>
+    </LocalAuthProvider>,
+  );
 }
 
 afterEach(() => {

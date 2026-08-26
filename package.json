@@ -9,9 +9,11 @@
   ],
   "scripts": {
     "dev": "npm run dev --workspace @creator-agent/simulator",
+    "dev:api": "npm run dev --workspace @creator-agent/api",
     "dev:agent": "npm run dev --workspace @creator-agent/local-agent",
     "dev:e2e": "concurrently --kill-others --names agent,app \"npm run dev:agent\" \"npm run dev\"",
-    "build": "npm run build --workspace @creator-agent/core && npm run build --workspace @creator-agent/local-agent && npm run build --workspace @creator-agent/simulator",
+    "build": "npm run build --workspace @creator-agent/core && npm run build --workspace @creator-agent/api && npm run build --workspace @creator-agent/local-agent && npm run build --workspace @creator-agent/simulator",
+    "db:migrate": "npm run db:migrate --workspace @creator-agent/api",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc -b",

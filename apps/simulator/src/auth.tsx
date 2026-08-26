@@ -79,10 +79,11 @@ export function resolveAuthConfiguration(
 
   const domain = clean(environment.VITE_AUTH0_DOMAIN);
   const clientId = clean(environment.VITE_AUTH0_CLIENT_ID);
-  if (!domain || !clientId) {
+  const audience = clean(environment.VITE_AUTH0_AUDIENCE);
+  if (!domain || !clientId || !audience) {
     return {
       mode,
-      error: "Auth0 is enabled but VITE_AUTH0_DOMAIN or VITE_AUTH0_CLIENT_ID is missing.",
+      error: "Auth0 is enabled but its domain, client ID, or API audience is missing.",
     };
   }
 
@@ -90,7 +91,7 @@ export function resolveAuthConfiguration(
     mode,
     domain,
     clientId,
-    audience: clean(environment.VITE_AUTH0_AUDIENCE),
+    audience,
   };
 }
 
@@ -187,7 +188,7 @@ export function CreatorAuthProvider({
       useRefreshTokens={false}
       authorizationParams={{
         redirect_uri: window.location.origin,
-        scope: "openid profile email",
+        scope: "openid profile email read:creator",
         ...(configuration.audience ? { audience: configuration.audience } : {}),
       }}
     >

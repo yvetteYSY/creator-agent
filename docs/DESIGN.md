@@ -20,6 +20,8 @@ The first interactive simulator is deliberately disconnected from AI providers. 
 
 Connecting a real AI provider is a separate, explicit production milestone. Before that milestone, the team must approve provider ownership and billing, per-agent budgets, hard spend ceilings, request attribution, usage alerts, retention/no-training settings, and a kill switch. End users' personal API keys or consumer AI subscriptions must never be used implicitly to fund platform traffic.
 
+The first protected API slice validates Auth0 access tokens and stores only an opaque internal user ID, verified OIDC issuer/subject, and lifecycle timestamps. Browser profile data and bearer tokens are not persisted. The API derives creator ownership from the verified identity and never trusts a client-supplied owner ID.
+
 The prototype supports an explicit Bring Your Own Agent (BYOA) route. Creator Agent performs authorization and retrieval, then sends only the current question, bounded history, agent instructions, and approved excerpts to the selected endpoint. The route is disabled by default, requires an ownership/trust acknowledgement, accepts HTTPS for remote endpoints or HTTP only on localhost, and keeps any bearer token in memory. See [AGENT_ROUTING.md](AGENT_ROUTING.md).
 
 ## 2. Problem
@@ -273,6 +275,9 @@ Use UUIDs, explicit tenant keys, UTC timestamps, and soft deletion where immedia
 ## 10. API surface (draft)
 
 ```text
+GET    /health
+GET    /v1/me
+
 POST   /v1/agents
 GET    /v1/agents/:agentId
 PATCH  /v1/agents/:agentId

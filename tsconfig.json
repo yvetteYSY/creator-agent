@@ -2,6 +2,7 @@
   "files": [],
   "references": [
     { "path": "packages/core" },
+    { "path": "apps/api" },
     { "path": "apps/local-agent" },
     { "path": "apps/simulator" }
   ]
