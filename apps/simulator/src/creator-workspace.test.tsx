@@ -10,6 +10,7 @@ import {
   resolveCreatorApiConfiguration,
   saveDurableAgent,
   saveDurableSourceVisibility,
+  uploadDurableVideo,
 } from "./creator-workspace";
 
 const durableAgent = {
@@ -179,5 +180,75 @@ describe("protected creator workspace client", () => {
       getAccessToken: async () => "signed-token",
       fetcher,
     })).rejects.toThrowError(/invalid agent/i);
+  });
+
+  it("uploads video directly without sending the Auth0 token to object storage", async () => {
+    const file = new File([new Uint8Array([0, 0, 0, 20])], "private.mp4", { type: "video/mp4" });
+    const storageUrl = "https://storage.example/private-upload";
+    const fetcher = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const target = String(url);
+      if (target.endsWith("/sources/uploads")) return json({
+        source: durableSource,
+        upload: {
+          url: storageUrl,
+          fields: { key: "private-uploads/opaque", policy: "signed", "Content-Type": "video/mp4" },
+          expiresAt: "2026-08-25T00:10:00.000Z",
+        },
+      }, 201);
+      if (target === storageUrl) return new Response(null, { status: 204 });
+      if (target.endsWith(`/sources/${durableSource.id}/complete`)) return json({
+        source: { ...durableSource, status: "uploaded" },
+      });
+      return json({ error: "unexpected request" }, 500);
+    });
+    const source = await uploadDurableVideo({
+      baseUrl: "https://api.example",
+      agentId: durableAgent.id,
+      title: "Private workshop",
+      file,
+      getAccessToken: async () => "auth0-access-token",
+      fetcher,
+    });
+    expect(source.status).toBe("uploaded");
+    const storageCall = fetcher.mock.calls.find(([url]) => String(url) === storageUrl);
+    expect(storageCall?.[1]?.headers).toBeUndefined();
+    expect(storageCall?.[1]?.body).toBeInstanceOf(FormData);
+    const form = storageCall?.[1]?.body as FormData;
+    expect(form.get("key")).toBe("private-uploads/opaque");
+    expect(form.get("file")).toBe(file);
+    for (const [url, init] of fetcher.mock.calls.filter(([url]) => String(url).startsWith("https://api.example"))) {
+      expect(String(url)).not.toBe(storageUrl);
+      expect(init?.headers).toMatchObject({ authorization: "Bearer auth0-access-token" });
+    }
+  });
+
+  it("refuses an insecure remote upload destination before sending file bytes", async () => {
+    const file = new File([new Uint8Array([0, 0, 0, 20])], "private.mp4", { type: "video/mp4" });
+    const fetcher = vi.fn(async (url: string | URL | Request) => {
+      const target = String(url);
+      if (target.endsWith("/sources/uploads")) return json({
+        source: durableSource,
+        upload: {
+          url: "http://storage.example/private-upload",
+          fields: { key: "private-uploads/opaque", policy: "signed", "Content-Type": "video/mp4" },
+          expiresAt: "2026-08-25T00:10:00.000Z",
+        },
+      }, 201);
+      if (target.endsWith(`/sources/${durableSource.id}`)) return json({ deleted: true });
+      return json({ error: "unexpected request" }, 500);
+    });
+
+    await expect(uploadDurableVideo({
+      baseUrl: "https://api.example",
+      agentId: durableAgent.id,
+      title: "Private workshop",
+      file,
+      getAccessToken: async () => "auth0-access-token",
+      fetcher,
+    })).rejects.toThrowError(/unsafe upload destination/i);
+    expect(fetcher.mock.calls.some(([url]) => String(url) === "http://storage.example/private-upload"))
+      .toBe(false);
+    expect(fetcher.mock.calls.some(([url]) => String(url).endsWith(`/sources/${durableSource.id}`)))
+      .toBe(true);
   });
 });

@@ -18,6 +18,7 @@ suite("PostgreSQL creator workspace integration", () => {
       "001_creator_identities.sql",
       "002_creator_workspace.sql",
       "003_agent_customization.sql",
+      "004_private_uploads.sql",
     ]) {
       const sql = await readFile(new URL(`../migrations/${migration}`, import.meta.url), "utf8");
       await pool!.query(sql);
@@ -69,13 +70,27 @@ suite("PostgreSQL creator workspace integration", () => {
     const source = await workspace.createSource(ownerA.id, agent.id, {
       title: "Integration video",
       type: "video",
+      upload: {
+        storageKey: "private-uploads/postgres-integration",
+        contentType: "video/mp4",
+        size: 42,
+        expiresAt: "2026-08-25T12:00:00.000Z",
+      },
     });
     expect(source).toMatchObject({ status: "awaiting_upload", visibility: "preview" });
+    expect(await workspace.getSourceUpload(ownerA.id, agent.id, source.id)).toMatchObject({
+      storageKey: "private-uploads/postgres-integration",
+      expectedContentType: "video/mp4",
+      expectedSize: 42,
+    });
+    expect(await workspace.markSourceUploaded(ownerA.id, agent.id, source.id))
+      .toMatchObject({ status: "uploaded", visibility: "preview" });
     await expect(workspace.updateSourceVisibility(ownerA.id, agent.id, source.id, "public"))
       .rejects.toThrowError(WorkspaceStateConflictError);
     await expect(workspace.updateSourceVisibility(ownerB.id, agent.id, source.id, "disabled"))
       .rejects.toThrowError(WorkspaceRecordNotFoundError);
-    await workspace.deleteSource(ownerA.id, agent.id, source.id);
+    await expect(workspace.deleteSource(ownerA.id, agent.id, source.id))
+      .resolves.toEqual({ storageKey: "private-uploads/postgres-integration" });
     expect(await workspace.listSources(ownerA.id, agent.id)).toEqual([]);
   });
 });

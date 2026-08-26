@@ -188,6 +188,7 @@ export function App() {
           <Studio
             agent={agent}
             sources={sources}
+            uploadsEnabled={workspace.isPersistent}
             onAddSource={(input) => {
               const source = runtime.engine.addSource({
                 ownerId: runtime.ownerId,
@@ -207,19 +208,24 @@ export function App() {
               );
             }}
             onStageVideo={(input) => {
+              const { file, ...metadata } = input;
               const source = runtime.engine.stageVideoSource({
                 ownerId: runtime.ownerId,
                 agentId: runtime.agentId,
-                ...input,
+                ...metadata,
               });
-              refresh("Video staged locally. It will remain unavailable to answers until transcription is configured.");
-              void workspace.createSource({ title: input.title, type: "video" }).then(
+              refresh(workspace.isPersistent
+                ? "Authorizing a private direct video upload."
+                : "Video staged locally. It will remain unavailable to answers until transcription is configured.");
+              void workspace.uploadVideo({ title: input.title, file }).then(
                 (durable) => {
                   if (!durable) return;
                   setDurableSourceIds((current) => ({ ...current, [source.id]: durable.id }));
-                  refresh("Video metadata saved privately. No video bytes were uploaded.");
+                  refresh("Video uploaded privately and queued for the future scanning step.");
                 },
-                () => refresh("The video remains staged locally, but its metadata could not be saved."),
+                (error: unknown) => refresh(error instanceof Error
+                  ? error.message
+                  : "The video remains staged locally, but its private upload failed."),
               );
             }}
             onVisibility={(sourceId, visibility) => {
@@ -337,6 +343,7 @@ function NavButton({
 function Studio({
   agent,
   sources,
+  uploadsEnabled,
   onAddSource,
   onStageVideo,
   onVisibility,
@@ -347,8 +354,9 @@ function Studio({
 }: {
   agent: ReturnType<CreatorAgentEngine["getAgent"]>;
   sources: Source[];
+  uploadsEnabled: boolean;
   onAddSource: (input: { title: string; kind: SourceKind; content: string; visibility: SourceVisibility }) => void;
-  onStageVideo: (input: { title: string; fileName: string; mimeType: string; size: number; visibility: SourceVisibility }) => void;
+  onStageVideo: (input: { title: string; file: File; fileName: string; mimeType: string; size: number; visibility: SourceVisibility }) => void;
   onVisibility: (sourceId: string, visibility: SourceVisibility) => void;
   onDelete: (sourceId: string) => void;
   onPreview: () => void;
@@ -370,6 +378,7 @@ function Studio({
         if (!videoFile) throw new Error("Choose an MP4, WebM, or QuickTime video.");
         onStageVideo({
           title,
+          file: videoFile,
           fileName: videoFile.name,
           mimeType: videoFile.type,
           size: videoFile.size,
@@ -417,7 +426,11 @@ function Studio({
 
           {showForm && (
             <form className="source-form" onSubmit={submit}>
-              <div className="form-banner"><LockKeyhole aria-hidden="true" /><span>{kind === "video" ? "The selected file stays in this browser. No bytes are uploaded or sent to a transcription service." : "This prototype processes pasted text in your browser. Nothing is uploaded."}</span></div>
+              <div className="form-banner"><LockKeyhole aria-hidden="true" /><span>{kind === "video"
+                ? uploadsEnabled
+                  ? "The video uploads directly to private object storage using a short-lived, size-limited policy. It is not sent to an AI provider."
+                  : "The selected file stays in this browser. No bytes are uploaded or sent to a transcription service."
+                : "This prototype processes pasted text in your browser. Nothing is uploaded."}</span></div>
               <div className="form-row">
                 <label>
                   Source title
@@ -458,7 +471,9 @@ function Studio({
                       }}
                     />
                   </span>
-                  <span className="processing-explainer"><Clock3 /> This zero-cost prototype stages metadata only. The source stays in processing and cannot answer questions until a creator-owned or self-hosted transcription route is connected.</span>
+                  <span className="processing-explainer"><Clock3 /> {uploadsEnabled
+                    ? "After private upload, the source stays unavailable until signature validation, malware scanning, and transcription are implemented."
+                    : "This zero-cost prototype stages metadata only. The source stays in processing and cannot answer questions until a creator-owned or self-hosted transcription route is connected."}</span>
                 </label>
               ) : (
                 <label>
@@ -482,7 +497,7 @@ function Studio({
               {error && <p className="form-error" role="alert">{error}</p>}
               <div className="form-actions">
                 <button className="button ghost" type="button" onClick={() => setShowForm(false)}>Cancel</button>
-                <button className="button primary" type="submit">{kind === "video" ? <UploadCloud aria-hidden="true" /> : <Sparkles aria-hidden="true" />} {kind === "video" ? "Stage video" : "Process source"}</button>
+                <button className="button primary" type="submit">{kind === "video" ? <UploadCloud aria-hidden="true" /> : <Sparkles aria-hidden="true" />} {kind === "video" ? uploadsEnabled ? "Upload video privately" : "Stage video" : "Process source"}</button>
               </div>
             </form>
           )}

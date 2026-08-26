@@ -1,6 +1,6 @@
 # Protected Creator Agent API
 
-The first API slice resolves a signed-in Auth0 identity to a durable internal creator record. It does not process content, call an AI provider, or incur model-token costs.
+The API resolves a signed-in Auth0 identity to a durable internal creator record and owner-scoped workspace. Its optional upload slice authorizes direct private MP4 storage without processing content, calling an AI provider, or incurring model-token costs.
 
 ## Endpoints
 
@@ -14,6 +14,8 @@ The first API slice resolves a signed-in Auth0 identity to a durable internal cr
 | `PATCH /v1/agents/:agentId` | `write:agent` | Create a new immutable configuration snapshot |
 | `GET /v1/agents/:agentId/sources` | `read:creator` | List caller-owned source metadata |
 | `POST /v1/agents/:agentId/sources` | `write:agent` | Create private, awaiting-upload source metadata |
+| `POST /v1/agents/:agentId/sources/uploads` | `write:agent` | Authorize one private direct MP4 upload |
+| `POST /v1/agents/:agentId/sources/:sourceId/complete` | `write:agent` | Verify stored size/type and mark the source uploaded |
 | `PATCH /v1/agents/:agentId/sources/:sourceId` | `write:agent` | Change source visibility; public requires ready status |
 | `DELETE /v1/agents/:agentId/sources/:sourceId` | `write:agent` | Tombstone metadata and disable serving immediately |
 
@@ -21,7 +23,11 @@ No route accepts an owner identifier. The API derives ownership only after verif
 
 Agent writes accept only the documented name, description, instruction, voice, response-depth, greeting, phrase, topic, and boundary fields. Lists and strings have explicit limits and unknown fields are rejected. Every update creates a complete configuration version so active and historical behavior can be distinguished.
 
-Source creation accepts only a display `title` and `type` (`document`, `audio`, or `video`). It stores metadata with `status: awaiting_upload` and `visibility: preview`. This endpoint does not accept file bytes, transcript text, storage locations, checksums, or public visibility; private upload authorization is a later slice. The visibility route rejects an attempt to make a source public until ingestion has placed it in `ready` state.
+Generic source creation accepts only a display `title` and `type` (`document`, `audio`, or `video`). It stores metadata with `status: awaiting_upload` and `visibility: preview`. It does not accept file bytes, transcript text, storage locations, checksums, or public visibility.
+
+Private upload authorization accepts a title, `.mp4` filename, exact `video/mp4` content type, and integer size from 1 byte through 250 MB. It returns a 10-minute S3-compatible POST policy pinned to one server-generated opaque key, exact content type, and exact byte size. The browser posts the file directly to object storage without an API bearer token, then calls the authenticated completion route. Completion performs a server-side `HEAD`, compares stored metadata to the authorization, deletes mismatches, and moves a valid source only to `uploaded`/`preview`. It does not mark content ready or public. See [PRIVATE_UPLOADS.md](PRIVATE_UPLOADS.md).
+
+The visibility route rejects an attempt to make any source public until a future ingestion worker has placed it in `ready` state.
 
 ## Configure Auth0
 
@@ -33,7 +39,7 @@ Source creation accepts only a display `title` and `type` (`document`, `audio`, 
 
 ## Run locally
 
-Start a local PostgreSQL instance if needed:
+Start local PostgreSQL if needed:
 
 ```bash
 docker compose up -d database
@@ -63,23 +69,25 @@ The identity and workspace tables store:
 - Creation and last-seen timestamps
 - A deletion timestamp when access is revoked
 - Agent name, description, draft/publication state, and immutable configuration versions
-- Source title, media type, processing status, and private/public/disabled visibility
+- Source title, media type, processing status, private/public/disabled visibility, opaque storage key, expected content type/size, and upload-policy expiry
 
-They do not store access tokens, passwords, email addresses, display names, profile images, uploaded bytes, transcripts, extracted text, storage credentials, or AI-provider credentials. A unique `(auth_issuer, auth_subject)` constraint provides stable mapping under concurrent logins. A deleted identity is not automatically reactivated.
+PostgreSQL does not store access tokens, passwords, email addresses, display names, profile images, uploaded bytes, transcripts, extracted text, storage credentials, or AI-provider credentials. Uploaded bytes live only in the configured private object store. A unique `(auth_issuer, auth_subject)` constraint provides stable mapping under concurrent logins. A deleted identity is not automatically reactivated.
 
 Agent configuration history is append-only. Source rows redundantly carry the owner UUID and use a composite `(agent_id, owner_id)` foreign key, preventing a source from being attached to another creator's agent even if application code is incorrect. Migration names are recorded and pending migrations run in one transaction. Migration replay is idempotent and verified against PostgreSQL 17 in the local integration check.
 
 ## Production boundary
 
 - Keep `DATABASE_URL` in a managed server-side secret store; never expose it as `VITE_*` configuration.
+- Keep storage credentials server-side, restrict them to the private bucket/prefix, and never expose them as `VITE_*` configuration.
 - Use TLS for the deployed API and database connection.
+- Require HTTPS for production object storage, encryption at rest, block-public-access controls, version/lifecycle policy review, and a CORS allowlist containing only the exact simulator/app web origin.
 - Set one exact allowed browser origin per environment.
 - Keep the Auth0 issuer and JWKS location operator-configured; never select them from unverified token claims.
 - Return generic authentication errors and never log bearer tokens.
 - Enforce resource ownership in every subsequent agents and sources query using the internal creator ID resolved by this boundary.
 - Keep titles and configuration values out of logs and traces because creators may place sensitive information in either field.
 
-The current local simulator still uses its explicit development-only identity and does not call this API. Auth0 mode resolves `/v1/me`, loads or bootstraps the durable agent, restores its configuration, and persists later customization and source-metadata changes. Source content remains browser-only until the private upload slice. Real protected integration requires a configured Auth0 tenant and PostgreSQL database.
+The default local simulator still uses its explicit development-only identity and does not call this API. Auth0 mode resolves `/v1/me`, loads or bootstraps the durable agent, restores its configuration, persists later customization, and can privately upload MP4 files when storage is configured. Pasted source text remains browser-only. Real protected integration requires a configured Auth0 tenant, PostgreSQL database, and private S3-compatible bucket.
 
 ## PostgreSQL integration check
 
@@ -91,3 +99,16 @@ TEST_DATABASE_URL=postgres://creator_agent:password@127.0.0.1:5432/creator_agent
 ```
 
 The integration suite creates test identity, agent, configuration, and source rows. Use only an empty disposable database; never point it at development, staging, or production data.
+
+## Object-storage integration check
+
+Normal tests require no object store. To validate signed POST, metadata inspection, exact-size rejection, and deletion against a dedicated local S3-compatible endpoint:
+
+```bash
+TEST_OBJECT_STORAGE_ENDPOINT=http://127.0.0.1:9000 \
+TEST_OBJECT_STORAGE_ACCESS_KEY_ID=creator-agent-local \
+TEST_OBJECT_STORAGE_SECRET_ACCESS_KEY=creator-agent-local-secret \
+  npm test -- --run apps/api/tests/object-storage.integration.test.ts
+```
+
+The test creates the `creator-agent-private` bucket if missing, uses only synthetic bytes under randomized keys, deletes every accepted test object, and is skipped unless `TEST_OBJECT_STORAGE_ENDPOINT` is set. Use a disposable development service only.

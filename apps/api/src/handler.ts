@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import {
   AuthenticationError,
   readBearerToken,
@@ -16,6 +17,11 @@ import {
   type UpdateAgentInput,
   type WorkspaceRepository,
 } from "./workspace-store";
+import {
+  ObjectStorageUnavailableError,
+  StoredObjectNotFoundError,
+  type ObjectStorage,
+} from "./object-storage";
 
 export interface ApiRequest {
   method: string;
@@ -33,6 +39,7 @@ export interface ApiDependencies {
   verifier: AccessTokenVerifier;
   creators: CreatorRepository;
   workspace: WorkspaceRepository;
+  storage?: ObjectStorage;
 }
 
 class RequestValidationError extends Error {}
@@ -41,6 +48,8 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3
 const AGENT_ITEM_PATTERN = /^\/v1\/agents\/([^/]+)$/;
 const SOURCE_COLLECTION_PATTERN = /^\/v1\/agents\/([^/]+)\/sources$/;
 const SOURCE_ITEM_PATTERN = /^\/v1\/agents\/([^/]+)\/sources\/([^/]+)$/;
+const SOURCE_UPLOAD_PATTERN = /^\/v1\/agents\/([^/]+)\/sources\/uploads$/;
+const SOURCE_COMPLETE_PATTERN = /^\/v1\/agents\/([^/]+)\/sources\/([^/]+)\/complete$/;
 
 export async function handleApiRequest(
   request: ApiRequest,
@@ -67,12 +76,70 @@ export async function handleApiRequest(
       return { status: 201, body: { agent: publicAgent(agent) } };
     }
 
+    const sourceComplete = SOURCE_COMPLETE_PATTERN.exec(request.path);
+    if (sourceComplete && request.method === "POST") {
+      const creator = await authorize(request, dependencies, "write:agent");
+      const agentId = resourceId(sourceComplete[1], "agent ID");
+      const sourceId = resourceId(sourceComplete[2], "source ID");
+      const storage = availableStorage(dependencies.storage);
+      const upload = await dependencies.workspace.getSourceUpload(creator.id, agentId, sourceId);
+      let object;
+      try {
+        object = await storage.inspectObject(upload.storageKey);
+      } catch (error) {
+        if (error instanceof StoredObjectNotFoundError) {
+          throw new WorkspaceStateConflictError("The authorized video upload was not found.");
+        }
+        throw error;
+      }
+      if (object.size !== upload.expectedSize || object.contentType !== upload.expectedContentType) {
+        await storage.deleteObject(upload.storageKey);
+        await dependencies.workspace.markSourceFailed(creator.id, agentId, sourceId);
+        throw new WorkspaceStateConflictError("The uploaded video did not match its authorized size and content type.");
+      }
+      const source = await dependencies.workspace.markSourceUploaded(creator.id, agentId, sourceId);
+      return { status: 200, body: { source: publicSource(source) } };
+    }
+
+    const sourceUpload = SOURCE_UPLOAD_PATTERN.exec(request.path);
+    if (sourceUpload && request.method === "POST") {
+      const creator = await authorize(request, dependencies, "write:agent");
+      const agentId = resourceId(sourceUpload[1], "agent ID");
+      const input = parseVideoUpload(request.body);
+      const storage = availableStorage(dependencies.storage);
+      const storageKey = `private-uploads/${randomUUID()}`;
+      const policy = await storage.createUpload({
+        key: storageKey,
+        contentType: input.contentType,
+        exactSize: input.size,
+        expiresInSeconds: 600,
+      });
+      const source = await dependencies.workspace.createSource(creator.id, agentId, {
+        title: input.title,
+        type: "video",
+        upload: {
+          storageKey,
+          contentType: input.contentType,
+          size: input.size,
+          expiresAt: policy.expiresAt,
+        },
+      });
+      return {
+        status: 201,
+        body: {
+          source: publicSource(source),
+          upload: policy,
+        },
+      };
+    }
+
     const sourceItem = SOURCE_ITEM_PATTERN.exec(request.path);
     if (sourceItem && request.method === "DELETE") {
       const creator = await authorize(request, dependencies, "write:agent");
       const agentId = resourceId(sourceItem[1], "agent ID");
       const sourceId = resourceId(sourceItem[2], "source ID");
-      await dependencies.workspace.deleteSource(creator.id, agentId, sourceId);
+      const deleted = await dependencies.workspace.deleteSource(creator.id, agentId, sourceId);
+      if (deleted.storageKey) await availableStorage(dependencies.storage).deleteObject(deleted.storageKey);
       return { status: 200, body: { deleted: true } };
     }
     if (sourceItem && request.method === "PATCH") {
@@ -142,6 +209,9 @@ export async function handleApiRequest(
     }
     if (error instanceof WorkspaceStateConflictError) {
       return { status: 409, body: { error: error.message } };
+    }
+    if (error instanceof ObjectStorageUnavailableError) {
+      return { status: 503, body: { error: "Private upload storage is unavailable." } };
     }
     throw error;
   }
@@ -301,6 +371,28 @@ function parseVisibility(body: unknown): SourceVisibility {
     throw new RequestValidationError("visibility must be preview, public, or disabled.");
   }
   return input.visibility;
+}
+
+function parseVideoUpload(body: unknown) {
+  const input = objectBody(body);
+  rejectUnknown(input, ["title", "fileName", "contentType", "size"]);
+  const title = text(input, "title", 160, { required: true })!;
+  const fileName = text(input, "fileName", 255, { required: true })!;
+  if (!fileName.toLowerCase().endsWith(".mp4")) {
+    throw new RequestValidationError("The first private upload slice accepts MP4 files only.");
+  }
+  if (input.contentType !== "video/mp4") {
+    throw new RequestValidationError("contentType must be video/mp4.");
+  }
+  if (typeof input.size !== "number" || !Number.isInteger(input.size) || input.size < 1 || input.size > 250_000_000) {
+    throw new RequestValidationError("size must be an integer between 1 byte and 250 MB.");
+  }
+  return { title, contentType: input.contentType, size: input.size };
+}
+
+function availableStorage(storage?: ObjectStorage) {
+  if (!storage?.isAvailable) throw new ObjectStorageUnavailableError("Private object storage is not configured.");
+  return storage;
 }
 
 function resourceId(value: string | undefined, label: string) {

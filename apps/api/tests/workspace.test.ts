@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { AccessTokenVerifier, AuthenticatedPrincipal } from "../src/auth";
 import type { CreatorRecord, CreatorRepository } from "../src/creator-store";
 import { handleApiRequest, type ApiDependencies } from "../src/handler";
+import type { ObjectStorage, StoredObjectMetadata, UploadPolicy } from "../src/object-storage";
 import {
   PostgresWorkspaceRepository,
   WorkspaceRecordNotFoundError,
@@ -11,6 +12,7 @@ import {
   type CreateSourceInput,
   type SourceRecord,
   type SourceVisibility,
+  type UploadSourceRecord,
   type UpdateAgentInput,
   type WorkspaceRepository,
 } from "../src/workspace-store";
@@ -42,6 +44,7 @@ class MemoryCreators implements CreatorRepository {
 class MemoryWorkspace implements WorkspaceRepository {
   readonly agents = new Map<string, AgentRecord>();
   readonly sources = new Map<string, SourceRecord>();
+  readonly uploads = new Map<string, UploadSourceRecord>();
 
   async listAgents(ownerId: string) {
     return [...this.agents.values()].filter((agent) => agent.ownerId === ownerId);
@@ -121,6 +124,15 @@ class MemoryWorkspace implements WorkspaceRepository {
       updatedAt: NOW,
     };
     this.sources.set(record.id, record);
+    if (input.upload) {
+      this.uploads.set(record.id, {
+        ...record,
+        storageKey: input.upload.storageKey,
+        expectedContentType: input.upload.contentType,
+        expectedSize: input.upload.size,
+        uploadExpiresAt: input.upload.expiresAt,
+      });
+    }
     return record;
   }
 
@@ -142,12 +154,78 @@ class MemoryWorkspace implements WorkspaceRepository {
     return record;
   }
 
+  async getSourceUpload(ownerId: string, agentId: string, sourceId: string) {
+    const upload = this.uploads.get(sourceId);
+    if (!upload || upload.ownerId !== ownerId || upload.agentId !== agentId) {
+      throw new WorkspaceRecordNotFoundError();
+    }
+    return upload;
+  }
+
+  async markSourceUploaded(ownerId: string, agentId: string, sourceId: string) {
+    return this.setStatus(ownerId, agentId, sourceId, "uploaded", "preview");
+  }
+
+  async markSourceFailed(ownerId: string, agentId: string, sourceId: string) {
+    return this.setStatus(ownerId, agentId, sourceId, "failed", "disabled");
+  }
+
+  private async setStatus(
+    ownerId: string,
+    agentId: string,
+    sourceId: string,
+    status: SourceRecord["status"],
+    visibility: SourceVisibility,
+  ) {
+    const source = this.sources.get(sourceId);
+    if (!source || source.ownerId !== ownerId || source.agentId !== agentId) {
+      throw new WorkspaceRecordNotFoundError();
+    }
+    const updated = { ...source, status, visibility };
+    this.sources.set(sourceId, updated);
+    return updated;
+  }
+
   async deleteSource(ownerId: string, agentId: string, sourceId: string) {
     const source = this.sources.get(sourceId);
     if (!source || source.ownerId !== ownerId || source.agentId !== agentId) {
       throw new WorkspaceRecordNotFoundError();
     }
     this.sources.delete(sourceId);
+    const storageKey = this.uploads.get(sourceId)?.storageKey;
+    this.uploads.delete(sourceId);
+    return storageKey ? { storageKey } : {};
+  }
+}
+
+class MemoryObjectStorage implements ObjectStorage {
+  readonly isAvailable = true;
+  readonly policies: Array<{ key: string; contentType: string; exactSize: number }> = [];
+  readonly objects = new Map<string, StoredObjectMetadata>();
+  readonly deleted: string[] = [];
+
+  async createUpload(input: {
+    key: string;
+    contentType: string;
+    exactSize: number;
+  }): Promise<UploadPolicy> {
+    this.policies.push(input);
+    return {
+      url: "https://storage.example/private-upload",
+      fields: { key: input.key, "Content-Type": input.contentType, policy: "signed-policy" },
+      expiresAt: "2026-08-25T00:10:00.000Z",
+    };
+  }
+
+  async inspectObject(key: string) {
+    const object = this.objects.get(key);
+    if (!object) throw new Error("missing test object");
+    return object;
+  }
+
+  async deleteObject(key: string) {
+    this.objects.delete(key);
+    this.deleted.push(key);
   }
 }
 
@@ -160,9 +238,10 @@ function dependencies(
   creators: MemoryCreators,
   workspace: MemoryWorkspace,
   scopes?: string[],
+  storage?: ObjectStorage,
 ): ApiDependencies {
   const verifier: AccessTokenVerifier = { verify: vi.fn(async () => principal(subject, scopes)) };
-  return { verifier, creators, workspace };
+  return { verifier, creators, workspace, storage };
 }
 
 function request(method: string, path: string, body?: unknown) {
@@ -257,6 +336,87 @@ describe("durable creator workspace API", () => {
       `/v1/agents/${AGENT_A}/sources/${SOURCE_A}`,
     ), deps)).toEqual({ status: 200, body: { deleted: true } });
     expect(workspace.sources.size).toBe(0);
+  });
+
+  it("authorizes an exact private MP4 upload and verifies it before processing", async () => {
+    const creators = new MemoryCreators();
+    const workspace = new MemoryWorkspace();
+    const storage = new MemoryObjectStorage();
+    const deps = dependencies("auth0|creator-a", creators, workspace, undefined, storage);
+    await handleApiRequest(request("POST", "/v1/agents", { name: "Coach" }), deps);
+    const authorized = await handleApiRequest(request(
+      "POST",
+      `/v1/agents/${AGENT_A}/sources/uploads`,
+      {
+        title: "Private workshop",
+        fileName: "workshop.mp4",
+        contentType: "video/mp4",
+        size: 1024,
+      },
+    ), deps);
+    expect(authorized).toMatchObject({
+      status: 201,
+      body: {
+        source: { id: SOURCE_A, status: "awaiting_upload", visibility: "preview" },
+        upload: {
+          url: "https://storage.example/private-upload",
+          fields: { "Content-Type": "video/mp4", policy: "signed-policy" },
+        },
+      },
+    });
+    expect(storage.policies[0]).toMatchObject({ contentType: "video/mp4", exactSize: 1024 });
+    expect(storage.policies[0].key).toMatch(/^private-uploads\/[0-9a-f-]+$/);
+    expect(storage.policies[0].key).not.toContain("creator-");
+    expect(JSON.stringify(authorized.body)).not.toContain("storageKey");
+
+    storage.objects.set(storage.policies[0].key, { size: 1024, contentType: "video/mp4" });
+    const completed = await handleApiRequest(request(
+      "POST",
+      `/v1/agents/${AGENT_A}/sources/${SOURCE_A}/complete`,
+    ), deps);
+    expect(completed).toMatchObject({
+      status: 200,
+      body: { source: { status: "uploaded", visibility: "preview" } },
+    });
+  });
+
+  it("fails closed for unconfigured storage, invalid video metadata, and mismatched objects", async () => {
+    const creators = new MemoryCreators();
+    const workspace = new MemoryWorkspace();
+    const withoutStorage = dependencies("auth0|creator-a", creators, workspace);
+    await handleApiRequest(request("POST", "/v1/agents", { name: "Coach" }), withoutStorage);
+    expect(await handleApiRequest(request(
+      "POST",
+      `/v1/agents/${AGENT_A}/sources/uploads`,
+      { title: "Video", fileName: "video.mp4", contentType: "video/mp4", size: 100 },
+    ), withoutStorage)).toEqual({
+      status: 503,
+      body: { error: "Private upload storage is unavailable." },
+    });
+
+    const storage = new MemoryObjectStorage();
+    const deps = dependencies("auth0|creator-a", creators, workspace, undefined, storage);
+    expect((await handleApiRequest(request(
+      "POST",
+      `/v1/agents/${AGENT_A}/sources/uploads`,
+      { title: "Video", fileName: "video.mov", contentType: "video/quicktime", size: 100 },
+    ), deps)).status).toBe(400);
+    const authorized = await handleApiRequest(request(
+      "POST",
+      `/v1/agents/${AGENT_A}/sources/uploads`,
+      { title: "Video", fileName: "video.mp4", contentType: "video/mp4", size: 100 },
+    ), deps);
+    expect(authorized.status).toBe(201);
+    storage.objects.set(storage.policies[0].key, { size: 99, contentType: "video/mp4" });
+    expect(await handleApiRequest(request(
+      "POST",
+      `/v1/agents/${AGENT_A}/sources/${SOURCE_A}/complete`,
+    ), deps)).toEqual({
+      status: 409,
+      body: { error: "The uploaded video did not match its authorized size and content type." },
+    });
+    expect(storage.deleted).toEqual([storage.policies[0].key]);
+    expect(workspace.sources.get(SOURCE_A)).toMatchObject({ status: "failed", visibility: "disabled" });
   });
 
   it("returns the same generic 404 for another creator's agent and source", async () => {

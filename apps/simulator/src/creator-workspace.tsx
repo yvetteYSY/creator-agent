@@ -65,6 +65,7 @@ interface CreatorWorkspace {
   error?: string;
   saveAgent: (patch: Partial<DurableAgentConfiguration>) => Promise<DurableAgent | null>;
   createSource: (input: { title: string; type: DurableSourceType }) => Promise<DurableSource | null>;
+  uploadVideo: (input: { title: string; file: File }) => Promise<DurableSource | null>;
   setSourceVisibility: (sourceId: string, visibility: DurableSourceVisibility) => Promise<DurableSource | null>;
   deleteSource: (sourceId: string) => Promise<void>;
 }
@@ -269,6 +270,44 @@ export async function deleteDurableSource(
   });
 }
 
+export async function uploadDurableVideo(
+  options: CreatorApiCallOptions & { agentId: string; title: string; file: File },
+) {
+  const authorized = await creatorApiRequest({
+    ...options,
+    path: `/v1/agents/${encodeURIComponent(options.agentId)}/sources/uploads`,
+    method: "POST",
+    body: {
+      title: options.title,
+      fileName: options.file.name,
+      contentType: options.file.type,
+      size: options.file.size,
+    },
+  }) as { source?: unknown; upload?: unknown };
+  const source = durableSource(authorized.source);
+  try {
+    const upload = uploadPolicy(authorized.upload);
+    const form = new FormData();
+    for (const [field, value] of Object.entries(upload.fields)) form.append(field, value);
+    form.append("file", options.file);
+    const uploaded = await (options.fetcher ?? fetch)(upload.url, { method: "POST", body: form });
+    if (!uploaded.ok) throw new Error("Private object storage rejected the video upload.");
+    const completed = await creatorApiRequest({
+      ...options,
+      path: `/v1/agents/${encodeURIComponent(options.agentId)}/sources/${encodeURIComponent(source.id)}/complete`,
+      method: "POST",
+    }) as { source?: unknown };
+    return durableSource(completed.source);
+  } catch (error) {
+    try {
+      await deleteDurableSource({ ...options, agentId: options.agentId, sourceId: source.id });
+    } catch {
+      // The server has its own deletion/retention controls; preserve the original upload failure.
+    }
+    throw error;
+  }
+}
+
 export function CreatorWorkspaceProvider({
   children,
   configuration,
@@ -314,6 +353,7 @@ export function CreatorWorkspaceProvider({
       isLoading: false,
       saveAgent: async () => null,
       createSource: async () => null,
+      uploadVideo: async () => null,
       setSourceVisibility: async () => null,
       deleteSource: async () => undefined,
     };
@@ -333,6 +373,17 @@ export function CreatorWorkspaceProvider({
       createSource: async (input) => {
         if (!remote.agent) throw new Error("No durable agent is open.");
         const source = await createDurableSource({ ...apiOptions, agentId: remote.agent.id, input });
+        setRemote((current) => ({ ...current, sources: [source, ...current.sources] }));
+        return source;
+      },
+      uploadVideo: async (input) => {
+        if (!remote.agent) throw new Error("No durable agent is open.");
+        const source = await uploadDurableVideo({
+          ...apiOptions,
+          agentId: remote.agent.id,
+          title: input.title,
+          file: input.file,
+        });
         setRemote((current) => ({ ...current, sources: [source, ...current.sources] }));
         return source;
       },
@@ -372,6 +423,7 @@ function unavailableWorkspace(error: string): CreatorWorkspace {
     error,
     saveAgent: async () => null,
     createSource: async () => null,
+    uploadVideo: async () => null,
     setSourceVisibility: async () => null,
     deleteSource: async () => undefined,
   };
@@ -429,6 +481,23 @@ function durableSource(value: unknown): DurableSource {
     typeof source.createdAt !== "string" || typeof source.updatedAt !== "string"
   ) throw new Error("The creator API returned an invalid source.");
   return source as DurableSource;
+}
+
+function uploadPolicy(value: unknown) {
+  if (!value || typeof value !== "object") throw new Error("The creator API returned an invalid upload policy.");
+  const policy = value as { url?: unknown; fields?: unknown; expiresAt?: unknown };
+  if (
+    typeof policy.url !== "string" || !policy.fields || typeof policy.fields !== "object" ||
+    Array.isArray(policy.fields) || typeof policy.expiresAt !== "string" ||
+    !Object.values(policy.fields).every((field) => typeof field === "string")
+  ) throw new Error("The creator API returned an invalid upload policy.");
+  const destination = new URL(policy.url);
+  const localHttp = destination.protocol === "http:" &&
+    ["127.0.0.1", "localhost"].includes(destination.hostname);
+  if (destination.protocol !== "https:" && !localHttp) {
+    throw new Error("The creator API returned an unsafe upload destination.");
+  }
+  return policy as { url: string; fields: Record<string, string>; expiresAt: string };
 }
 
 function stringArray(value: unknown): value is string[] {

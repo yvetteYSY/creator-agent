@@ -64,6 +64,19 @@ export interface SourceRecord {
 export interface CreateSourceInput {
   title: string;
   type: SourceType;
+  upload?: {
+    storageKey: string;
+    contentType: string;
+    size: number;
+    expiresAt: string;
+  };
+}
+
+export interface UploadSourceRecord extends SourceRecord {
+  storageKey: string;
+  expectedContentType: string;
+  expectedSize: number;
+  uploadExpiresAt: string;
 }
 
 export interface WorkspaceRepository {
@@ -74,7 +87,10 @@ export interface WorkspaceRepository {
   listSources(ownerId: string, agentId: string): Promise<SourceRecord[]>;
   createSource(ownerId: string, agentId: string, input: CreateSourceInput): Promise<SourceRecord>;
   updateSourceVisibility(ownerId: string, agentId: string, sourceId: string, visibility: SourceVisibility): Promise<SourceRecord>;
-  deleteSource(ownerId: string, agentId: string, sourceId: string): Promise<void>;
+  getSourceUpload(ownerId: string, agentId: string, sourceId: string): Promise<UploadSourceRecord>;
+  markSourceUploaded(ownerId: string, agentId: string, sourceId: string): Promise<SourceRecord>;
+  markSourceFailed(ownerId: string, agentId: string, sourceId: string): Promise<SourceRecord>;
+  deleteSource(ownerId: string, agentId: string, sourceId: string): Promise<{ storageKey?: string }>;
 }
 
 export class WorkspaceRecordNotFoundError extends Error {}
@@ -109,6 +125,10 @@ interface SourceRow {
   visibility: SourceVisibility;
   created_at: Date | string;
   updated_at: Date | string;
+  storage_key?: string | null;
+  expected_content_type?: string | null;
+  expected_size?: number | string | null;
+  upload_expires_at?: Date | string | null;
 }
 
 const AGENT_SELECT = `SELECT a.id, a.owner_id, a.name, a.description, a.status,
@@ -319,12 +339,21 @@ export class PostgresWorkspaceRepository implements WorkspaceRepository {
 
   async createSource(ownerId: string, agentId: string, input: CreateSourceInput) {
     const result = await this.pool.query<SourceRow>(
-      `INSERT INTO sources (id, owner_id, agent_id, title, type)
-       SELECT $1, $2, a.id, $4, $5
+      `INSERT INTO sources (
+         id, owner_id, agent_id, title, type,
+         storage_key, expected_content_type, expected_size, upload_expires_at
+       )
+       SELECT $1, $2, a.id, $4, $5, $6, $7, $8, $9
        FROM agents a
        WHERE a.owner_id = $2 AND a.id = $3 AND a.deleted_at IS NULL
        RETURNING id, owner_id, agent_id, title, type, status, visibility, created_at, updated_at`,
-      [randomUUID(), ownerId, agentId, input.title, input.type],
+      [
+        randomUUID(), ownerId, agentId, input.title, input.type,
+        input.upload?.storageKey ?? null,
+        input.upload?.contentType ?? null,
+        input.upload?.size ?? null,
+        input.upload?.expiresAt ?? null,
+      ],
     );
     if (!result.rows[0]) throw new WorkspaceRecordNotFoundError("Agent not found.");
     return mapSource(result.rows[0]);
@@ -356,15 +385,65 @@ export class PostgresWorkspaceRepository implements WorkspaceRepository {
     return mapSource(result.rows[0]);
   }
 
+  async getSourceUpload(ownerId: string, agentId: string, sourceId: string) {
+    const result = await this.pool.query<SourceRow>(
+      `SELECT id, owner_id, agent_id, title, type, status, visibility, created_at, updated_at,
+         storage_key, expected_content_type, expected_size, upload_expires_at
+       FROM sources
+       WHERE owner_id = $1 AND agent_id = $2 AND id = $3 AND deleted_at IS NULL`,
+      [ownerId, agentId, sourceId],
+    );
+    const row = result.rows[0];
+    if (!row) throw new WorkspaceRecordNotFoundError("Source not found.");
+    if (
+      !row.storage_key || !row.expected_content_type || row.expected_size === null ||
+      row.expected_size === undefined || !row.upload_expires_at
+    ) throw new WorkspaceStateConflictError("This source has no authorized upload.");
+    return {
+      ...mapSource(row),
+      storageKey: row.storage_key,
+      expectedContentType: row.expected_content_type,
+      expectedSize: Number(row.expected_size),
+      uploadExpiresAt: iso(row.upload_expires_at),
+    };
+  }
+
+  async markSourceUploaded(ownerId: string, agentId: string, sourceId: string) {
+    return this.updateSourceStatus(ownerId, agentId, sourceId, "uploaded", "preview");
+  }
+
+  async markSourceFailed(ownerId: string, agentId: string, sourceId: string) {
+    return this.updateSourceStatus(ownerId, agentId, sourceId, "failed", "disabled");
+  }
+
+  private async updateSourceStatus(
+    ownerId: string,
+    agentId: string,
+    sourceId: string,
+    status: SourceStatus,
+    visibility: SourceVisibility,
+  ) {
+    const result = await this.pool.query<SourceRow>(
+      `UPDATE sources
+       SET status = $4, visibility = $5, updated_at = now()
+       WHERE owner_id = $1 AND agent_id = $2 AND id = $3 AND deleted_at IS NULL
+       RETURNING id, owner_id, agent_id, title, type, status, visibility, created_at, updated_at`,
+      [ownerId, agentId, sourceId, status, visibility],
+    );
+    if (!result.rows[0]) throw new WorkspaceRecordNotFoundError("Source not found.");
+    return mapSource(result.rows[0]);
+  }
+
   async deleteSource(ownerId: string, agentId: string, sourceId: string) {
-    const result = await this.pool.query(
+    const result = await this.pool.query<{ storage_key: string | null }>(
       `UPDATE sources
        SET status = 'deleting', visibility = 'disabled', deleted_at = now(), updated_at = now()
        WHERE owner_id = $1 AND agent_id = $2 AND id = $3 AND deleted_at IS NULL
-       RETURNING id`,
+       RETURNING storage_key`,
       [ownerId, agentId, sourceId],
     );
     if (!result.rows[0]) throw new WorkspaceRecordNotFoundError("Source not found.");
+    return result.rows[0].storage_key ? { storageKey: result.rows[0].storage_key } : {};
   }
 }
 

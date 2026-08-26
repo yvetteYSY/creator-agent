@@ -1,7 +1,7 @@
 # Creator Agent — Product and Technical Design
 
 **Status:** Draft for kickoff  
-**Last updated:** 2026-08-24  
+**Last updated:** 2026-08-25
 **Audience:** Product, design, engineering, AI/evaluation, trust and safety
 
 ## 1. Summary
@@ -16,11 +16,11 @@ The MVP should validate this hypothesis before adding voice cloning, avatars, au
 
 ### Prototype cost boundary
 
-The first interactive simulator is deliberately disconnected from AI providers. It uses deterministic local term matching, in-memory state, and synthetic load calculations. It must not contain model credentials, call generation/embedding/transcription APIs, consume user AI quotas, or incur token charges. Direct video selection stages file metadata locally and leaves the source in `processing`; the simulator does not read, upload, or falsely transcribe the selected bytes. Automated UI tests assert that grounded chat and direct video staging perform no network request. Managed creator login is the exception to the external-service boundary: when explicitly configured, the SPA redirects to Auth0 Universal Login using OIDC Authorization Code with PKCE. See [AUTHENTICATION.md](AUTHENTICATION.md).
+The interactive simulator is deliberately disconnected from AI providers. It uses deterministic local term matching and synthetic load calculations. It must not contain model credentials, call generation/embedding/transcription APIs, consume user AI quotas, or incur token charges. Default local mode keeps selected video bytes in the browser and automated UI tests assert that grounded chat and staging perform no network request. When explicitly configured, managed mode uses Auth0 OIDC Authorization Code with PKCE, persists the owner-scoped workspace, and can upload MP4 bytes directly to private S3-compatible storage. An upload stops at `uploaded`/preview and is never treated as understood content. See [AUTHENTICATION.md](AUTHENTICATION.md) and [PRIVATE_UPLOADS.md](PRIVATE_UPLOADS.md).
 
 Connecting a real AI provider is a separate, explicit production milestone. Before that milestone, the team must approve provider ownership and billing, per-agent budgets, hard spend ceilings, request attribution, usage alerts, retention/no-training settings, and a kill switch. End users' personal API keys or consumer AI subscriptions must never be used implicitly to fund platform traffic.
 
-The first protected API slice validates Auth0 access tokens and stores only an opaque internal user ID, verified OIDC issuer/subject, and lifecycle timestamps. Browser profile data and bearer tokens are not persisted. The API derives creator ownership from the verified identity and never trusts a client-supplied owner ID.
+The protected API validates Auth0 access tokens and stores an opaque internal user ID, verified OIDC issuer/subject, owner-scoped agents, immutable configuration versions, source metadata, and upload lifecycle metadata. Browser profile data, bearer tokens, and storage credentials are not persisted in PostgreSQL. The API derives creator ownership from the verified identity and never trusts a client-supplied owner ID.
 
 The prototype supports an explicit Bring Your Own Agent (BYOA) route. Creator Agent performs authorization and retrieval, then sends only the current question, bounded history, agent instructions, and approved excerpts to the selected endpoint. The route is disabled by default, requires an ownership/trust acknowledgement, accepts HTTPS for remote endpoints or HTTP only on localhost, and keeps any bearer token in memory. See [AGENT_ROUTING.md](AGENT_ROUTING.md).
 
@@ -135,6 +135,7 @@ An answer should visually separate generated prose from citations. When evidence
 ### Architectural boundaries
 
 - The mobile app never receives model-provider credentials or direct database access.
+- The browser receives only a narrowly scoped, expiring upload policy; it never receives storage credentials or forwards its Auth0 token to object storage.
 - The API owns authorization, quotas, conversation orchestration, and publish state.
 - Workers own expensive asynchronous ingestion tasks.
 - Original uploads and derived artifacts use distinct storage prefixes and retention rules.
@@ -212,9 +213,9 @@ Autoscaling signals should include active streams, requests per second, model co
 
 ## 7. Ingestion pipeline
 
-1. API creates a `source` record and a short-lived upload target.
-2. Client uploads directly to object storage.
-3. API verifies completion, file type, size, and ownership, then enqueues ingestion.
+1. API creates a `source` record and a short-lived upload target pinned to an opaque key, declared type, and exact size. **Implemented for MP4.**
+2. Client uploads directly to private object storage without proxying bytes through the API. **Implemented for MP4 in managed mode.**
+3. API verifies completion, stored type/size, and ownership, then enqueues ingestion. **Metadata verification is implemented; queueing is not.**
 4. Worker scans and normalizes the file.
 5. Text documents are parsed; audio/video is transcribed into timestamped segments.
 6. Extracted text is normalized while preserving headings, pages, speakers, and time ranges.
@@ -224,6 +225,8 @@ Autoscaling signals should include active streams, requests per second, model co
 10. The source becomes `ready`, or `failed` with a retryable/non-retryable reason.
 
 Jobs must be idempotent. Each stage records its input version, output version, attempt count, timing, and provider usage. Deleting a source tombstones it immediately for retrieval, then asynchronously removes original files, transcripts, chunks, embeddings, and cached answers.
+
+The current upload slice deliberately ends before step 4. It accepts only `.mp4`/`video/mp4` through a 10-minute exact-size policy and promotes a successful object only to `uploaded`/preview. The next worker must independently validate container signatures, duration, codecs, checksum, and malware status in quarantine before any transcription adapter receives the object. A source cannot become public until a later reviewed pipeline places it in `ready` state.
 
 ## 8. Retrieval and answer generation
 
@@ -261,7 +264,7 @@ Each citation returned to the client contains:
 | `users` | id, auth_subject, role, created_at, deleted_at |
 | `agents` | id, owner_id, slug, name, description, status, configuration_version |
 | `agent_configs` | agent_id, version, instructions, tone, boundaries, model settings |
-| `sources` | id, agent_id, type, title, status, storage_key, checksum, error_code |
+| `sources` | id, owner_id, agent_id, type, title, status, visibility, opaque storage_key, expected type/size, upload expiry, checksum, error_code |
 | `transcripts` | source_id, version, language, segments, provider metadata |
 | `chunks` | id, source_id, agent_id, text, location, token_count, embedding |
 | `conversations` | id, agent_id, visitor/user id, created_at, retention class |
@@ -292,7 +295,6 @@ DELETE /v1/agents/:agentId/sources/:sourceId
 POST   /v1/agents/:agentId/sources/uploads
 POST   /v1/agents/:agentId/sources/:sourceId/complete
 POST   /v1/agents/:agentId/sources/:sourceId/retry
-DELETE /v1/agents/:agentId/sources/:sourceId
 
 POST   /v1/agents/:agentId/preview/messages
 POST   /v1/public/agents/:slug/conversations
@@ -325,10 +327,10 @@ User-uploaded content is private by default, even when an agent is published. Pu
 Apply the following rules throughout the system:
 
 - **Collect the minimum:** request only the files and metadata required for ingestion. Do not collect contacts, device media libraries, or unrelated account data.
-- **Separate tenants:** scope storage paths, database rows, vector queries, queues, caches, and authorization checks by owner and agent. Never rely on an identifier supplied by the client without verifying ownership server-side.
+- **Separate tenants:** scope database rows, vector queries, queues, caches, and authorization checks by owner and agent. Use server-generated opaque object keys whose owner/source mapping exists only in the owner-scoped database; signed policies grant access to one exact key. Never rely on an identifier supplied by the client without verifying ownership server-side.
 - **Limit internal access:** production content is unavailable to staff by default. Time-limited support access requires an approved reason, least-privilege role, creator consent when appropriate, and an immutable audit event.
 - **Encrypt and isolate:** encrypt uploads, transcripts, chunks, embeddings, backups, and message history at rest. Use TLS in transit and separate encryption keys or equivalent isolation between production environments.
-- **Use short-lived links:** clients upload and open files through narrowly scoped, expiring signed URLs. Never expose permanent object-storage URLs or storage credentials.
+- **Use short-lived links:** clients upload and open files through narrowly scoped, expiring signed URLs or POST policies. Pin upload key, type, size, and encryption requirements. Never expose permanent object-storage URLs or storage credentials, and never forward API bearer tokens to storage.
 - **Control derivatives:** transcripts, thumbnails, summaries, chunks, embeddings, caches, and evaluation copies receive the same sensitivity classification and deletion policy as their source.
 - **Restrict AI providers:** send providers only the content needed for the current operation. Select contractual/API settings that prohibit training on customer data and define retention. Record the provider and policy version used for each job.
 - **Keep content out of telemetry:** do not place source text, prompts, transcripts, filenames, signed URLs, or message bodies in general logs, traces, crash reports, or analytics. Use opaque IDs and redacted error details.

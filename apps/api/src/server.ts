@@ -5,6 +5,7 @@ import { loadApiConfiguration } from "./config";
 import { PostgresCreatorRepository } from "./creator-store";
 import { handleApiRequest } from "./handler";
 import { PostgresWorkspaceRepository } from "./workspace-store";
+import { createObjectStorage, loadObjectStorageConfiguration } from "./object-storage";
 
 const configuration = loadApiConfiguration(process.env);
 const pool = new Pool({ connectionString: configuration.databaseUrl });
@@ -12,6 +13,7 @@ const dependencies = {
   verifier: new Auth0AccessTokenVerifier(configuration),
   creators: new PostgresCreatorRepository(pool),
   workspace: new PostgresWorkspaceRepository(pool),
+  storage: createObjectStorage(loadObjectStorageConfiguration(process.env)),
 };
 
 class HttpRequestError extends Error {
