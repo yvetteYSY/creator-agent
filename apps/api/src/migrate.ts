@@ -9,6 +9,7 @@ const migrations = [
   "002_creator_workspace.sql",
   "003_agent_customization.sql",
   "004_private_uploads.sql",
+  "005_quarantine_scanning.sql",
 ];
 const pool = new Pool({ connectionString: databaseUrl });
 const client = await pool.connect();

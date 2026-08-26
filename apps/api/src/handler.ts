@@ -83,6 +83,12 @@ export async function handleApiRequest(
       const sourceId = resourceId(sourceComplete[2], "source ID");
       const storage = availableStorage(dependencies.storage);
       const upload = await dependencies.workspace.getSourceUpload(creator.id, agentId, sourceId);
+      if (upload.status !== "awaiting_upload") {
+        if (upload.status === "uploaded" || upload.status === "scanning" || upload.status === "processing") {
+          return { status: 200, body: { source: publicSource(upload) } };
+        }
+        throw new WorkspaceStateConflictError("This video upload can no longer be completed.");
+      }
       let object;
       try {
         object = await storage.inspectObject(upload.storageKey);

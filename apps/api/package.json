@@ -7,6 +7,7 @@
     "dev": "tsx watch src/server.ts",
     "start": "tsx src/server.ts",
     "db:migrate": "tsx src/migrate.ts",
+    "scan:once": "tsx src/scan-once.ts",
     "build": "tsc -p tsconfig.json --noEmit"
   },
   "devDependencies": {

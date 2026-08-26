@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { CreateBucketCommand, S3Client } from "@aws-sdk/client-s3";
 import { describe, expect, it } from "vitest";
 import { createObjectStorage, loadObjectStorageConfiguration } from "../src/object-storage";
+import { validateMp4Prefix } from "../src/scanner";
 
 const endpoint = process.env.TEST_OBJECT_STORAGE_ENDPOINT;
 const suite = describe.skipIf(!endpoint);
@@ -35,7 +36,10 @@ suite("S3-compatible object storage integration", () => {
       }
 
       const storage = createObjectStorage(loadObjectStorageConfiguration(environment));
-      const bytes = new Uint8Array([0, 0, 0, 20, 102, 116, 121, 112, 105, 115, 111, 109]);
+      const bytes = new Uint8Array([
+        0, 0, 0, 20, 102, 116, 121, 112, 105, 115, 111, 109,
+        0, 0, 2, 0, 109, 112, 52, 50,
+      ]);
       const key = `private-uploads/integration-${randomUUID()}`;
       const policy = await storage.createUpload({
         key,
@@ -53,6 +57,9 @@ suite("S3-compatible object storage integration", () => {
         size: bytes.byteLength,
         contentType: "video/mp4",
       });
+      const prefix = await storage.readObjectPrefix(key, 64);
+      expect(prefix).toEqual(bytes);
+      expect(validateMp4Prefix(prefix)).toEqual({ valid: true });
       await storage.deleteObject(key);
       await expect(storage.inspectObject(key)).rejects.toThrowError(/not found/i);
 

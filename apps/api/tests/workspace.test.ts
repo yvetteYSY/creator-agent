@@ -163,10 +163,16 @@ class MemoryWorkspace implements WorkspaceRepository {
   }
 
   async markSourceUploaded(ownerId: string, agentId: string, sourceId: string) {
+    const current = this.sources.get(sourceId);
+    if (current?.status === "uploaded" || current?.status === "scanning" || current?.status === "processing") {
+      return current;
+    }
+    if (current?.status !== "awaiting_upload") throw new WorkspaceStateConflictError();
     return this.setStatus(ownerId, agentId, sourceId, "uploaded", "preview");
   }
 
   async markSourceFailed(ownerId: string, agentId: string, sourceId: string) {
+    if (this.sources.get(sourceId)?.status !== "awaiting_upload") throw new WorkspaceStateConflictError();
     return this.setStatus(ownerId, agentId, sourceId, "failed", "disabled");
   }
 
@@ -183,6 +189,8 @@ class MemoryWorkspace implements WorkspaceRepository {
     }
     const updated = { ...source, status, visibility };
     this.sources.set(sourceId, updated);
+    const upload = this.uploads.get(sourceId);
+    if (upload) this.uploads.set(sourceId, { ...upload, status, visibility });
     return updated;
   }
 
@@ -203,6 +211,7 @@ class MemoryObjectStorage implements ObjectStorage {
   readonly policies: Array<{ key: string; contentType: string; exactSize: number }> = [];
   readonly objects = new Map<string, StoredObjectMetadata>();
   readonly deleted: string[] = [];
+  readonly inspected: string[] = [];
 
   async createUpload(input: {
     key: string;
@@ -218,9 +227,14 @@ class MemoryObjectStorage implements ObjectStorage {
   }
 
   async inspectObject(key: string) {
+    this.inspected.push(key);
     const object = this.objects.get(key);
     if (!object) throw new Error("missing test object");
     return object;
+  }
+
+  async readObjectPrefix() {
+    return new Uint8Array();
   }
 
   async deleteObject(key: string) {
@@ -378,6 +392,14 @@ describe("durable creator workspace API", () => {
       status: 200,
       body: { source: { status: "uploaded", visibility: "preview" } },
     });
+    expect(await handleApiRequest(request(
+      "POST",
+      `/v1/agents/${AGENT_A}/sources/${SOURCE_A}/complete`,
+    ), deps)).toMatchObject({
+      status: 200,
+      body: { source: { status: "uploaded", visibility: "preview" } },
+    });
+    expect(storage.inspected).toEqual([storage.policies[0].key]);
   });
 
   it("fails closed for unconfigured storage, invalid video metadata, and mismatched objects", async () => {

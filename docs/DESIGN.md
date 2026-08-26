@@ -216,7 +216,7 @@ Autoscaling signals should include active streams, requests per second, model co
 1. API creates a `source` record and a short-lived upload target pinned to an opaque key, declared type, and exact size. **Implemented for MP4.**
 2. Client uploads directly to private object storage without proxying bytes through the API. **Implemented for MP4 in managed mode.**
 3. API verifies completion, stored type/size, and ownership, then enqueues ingestion. **Metadata verification is implemented; queueing is not.**
-4. Worker scans and normalizes the file.
+4. Worker scans and normalizes the file. **A concurrency-safe one-shot worker currently performs only bounded preliminary MP4 `ftyp` validation.**
 5. Text documents are parsed; audio/video is transcribed into timestamped segments.
 6. Extracted text is normalized while preserving headings, pages, speakers, and time ranges.
 7. Content is split into overlapping semantic chunks.
@@ -226,7 +226,7 @@ Autoscaling signals should include active streams, requests per second, model co
 
 Jobs must be idempotent. Each stage records its input version, output version, attempt count, timing, and provider usage. Deleting a source tombstones it immediately for retrieval, then asynchronously removes original files, transcripts, chunks, embeddings, and cached answers.
 
-The current upload slice deliberately ends before step 4. It accepts only `.mp4`/`video/mp4` through a 10-minute exact-size policy and promotes a successful object only to `uploaded`/preview. The next worker must independently validate container signatures, duration, codecs, checksum, and malware status in quarantine before any transcription adapter receives the object. A source cannot become public until a later reviewed pipeline places it in `ready` state.
+The current upload slice accepts only `.mp4`/`video/mp4` through a 10-minute exact-size policy and promotes a successful object only to `uploaded`/preview. A one-shot worker uses an exclusive database lease and reads at most 4 KB to validate a supported `ftyp` signature before moving to `processing`; this is preliminary identification, not a safety verdict. The next sandboxed worker must fully validate the container, duration, codecs, checksum, and malware status before any transcription adapter receives the object. A source cannot become public until a later reviewed pipeline places it in `ready` state.
 
 ## 8. Retrieval and answer generation
 

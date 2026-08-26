@@ -1,5 +1,6 @@
 import {
   DeleteObjectCommand,
+  GetObjectCommand,
   HeadObjectCommand,
   S3Client,
   type S3ClientConfig,
@@ -26,6 +27,7 @@ export interface ObjectStorage {
     expiresInSeconds: number;
   }): Promise<UploadPolicy>;
   inspectObject(key: string): Promise<StoredObjectMetadata>;
+  readObjectPrefix(key: string, maximumBytes: number): Promise<Uint8Array>;
   deleteObject(key: string): Promise<void>;
 }
 
@@ -155,6 +157,44 @@ export class S3ObjectStorage implements ObjectStorage {
     }
   }
 
+  async readObjectPrefix(key: string, maximumBytes: number) {
+    if (!Number.isInteger(maximumBytes) || maximumBytes < 1 || maximumBytes > 64 * 1024) {
+      throw new Error("Object prefix reads must be between 1 byte and 64 KB.");
+    }
+    try {
+      const result = await this.client.send(new GetObjectCommand({
+        Bucket: this.bucket,
+        Key: key,
+        Range: `bytes=0-${maximumBytes - 1}`,
+      }));
+      if (!result.Body || !(Symbol.asyncIterator in result.Body)) {
+        throw new StoredObjectNotFoundError("The uploaded object body was unavailable.");
+      }
+      const chunks: Uint8Array[] = [];
+      let total = 0;
+      for await (const chunk of result.Body) {
+        const bytes = chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk);
+        total += bytes.byteLength;
+        if (total > maximumBytes) throw new Error("Object storage ignored the bounded range request.");
+        chunks.push(bytes);
+      }
+      const prefix = new Uint8Array(total);
+      let offset = 0;
+      for (const chunk of chunks) {
+        prefix.set(chunk, offset);
+        offset += chunk.byteLength;
+      }
+      return prefix;
+    } catch (error) {
+      if (error instanceof StoredObjectNotFoundError) throw error;
+      const name = error instanceof Error ? error.name : "";
+      if (name === "NotFound" || name === "NoSuchKey") {
+        throw new StoredObjectNotFoundError("The uploaded object was not found.");
+      }
+      throw error;
+    }
+  }
+
   async deleteObject(key: string) {
     await this.client.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: key }));
   }
@@ -166,6 +206,9 @@ class DisabledObjectStorage implements ObjectStorage {
     throw new ObjectStorageUnavailableError("Private object storage is not configured.");
   }
   async inspectObject(): Promise<StoredObjectMetadata> {
+    throw new ObjectStorageUnavailableError("Private object storage is not configured.");
+  }
+  async readObjectPrefix(): Promise<Uint8Array> {
     throw new ObjectStorageUnavailableError("Private object storage is not configured.");
   }
   async deleteObject() {

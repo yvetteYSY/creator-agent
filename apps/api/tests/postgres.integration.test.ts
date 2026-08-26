@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Pool } from "pg";
 import { PostgresCreatorRepository } from "../src/creator-store";
+import { PostgresScanRepository } from "../src/scanner-store";
 import {
   PostgresWorkspaceRepository,
   WorkspaceRecordNotFoundError,
@@ -19,6 +20,7 @@ suite("PostgreSQL creator workspace integration", () => {
       "002_creator_workspace.sql",
       "003_agent_customization.sql",
       "004_private_uploads.sql",
+      "005_quarantine_scanning.sql",
     ]) {
       const sql = await readFile(new URL(`../migrations/${migration}`, import.meta.url), "utf8");
       await pool!.query(sql);
@@ -85,6 +87,27 @@ suite("PostgreSQL creator workspace integration", () => {
     });
     expect(await workspace.markSourceUploaded(ownerA.id, agent.id, source.id))
       .toMatchObject({ status: "uploaded", visibility: "preview" });
+    const scanner = new PostgresScanRepository(pool!);
+    const scanJob = await scanner.claimNext({
+      staleBefore: new Date("2026-08-25T00:00:00.000Z"),
+      maxAttempts: 3,
+    });
+    expect(scanJob).toMatchObject({
+      sourceId: source.id,
+      storageKey: "private-uploads/postgres-integration",
+      attempt: 1,
+    });
+    await expect(scanner.claimNext({
+      staleBefore: new Date("2026-08-25T00:00:00.000Z"),
+      maxAttempts: 3,
+    })).resolves.toBeNull();
+    await expect(scanner.complete({
+      ...scanJob!,
+      leaseId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+    }, "video/mp4")).resolves.toBe(false);
+    await expect(scanner.complete(scanJob!, "video/mp4")).resolves.toBe(true);
+    expect(await workspace.listSources(ownerA.id, agent.id))
+      .toContainEqual(expect.objectContaining({ id: source.id, status: "processing", visibility: "preview" }));
     await expect(workspace.updateSourceVisibility(ownerA.id, agent.id, source.id, "public"))
       .rejects.toThrowError(WorkspaceStateConflictError);
     await expect(workspace.updateSourceVisibility(ownerB.id, agent.id, source.id, "disabled"))

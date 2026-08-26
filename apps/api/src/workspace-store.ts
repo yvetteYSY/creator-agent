@@ -3,7 +3,7 @@ import type { Pool, PoolClient } from "pg";
 
 export type AgentStatus = "draft" | "published" | "unpublished";
 export type SourceType = "document" | "audio" | "video";
-export type SourceStatus = "awaiting_upload" | "uploaded" | "processing" | "ready" | "failed" | "deleting";
+export type SourceStatus = "awaiting_upload" | "uploaded" | "scanning" | "processing" | "ready" | "failed" | "deleting";
 export type SourceVisibility = "preview" | "public" | "disabled";
 export type StylePreset = "warm" | "direct" | "curious" | "custom";
 export type ResponseLength = "short" | "balanced" | "deep";
@@ -409,11 +409,34 @@ export class PostgresWorkspaceRepository implements WorkspaceRepository {
   }
 
   async markSourceUploaded(ownerId: string, agentId: string, sourceId: string) {
-    return this.updateSourceStatus(ownerId, agentId, sourceId, "uploaded", "preview");
+    const updated = await this.updateSourceStatus(
+      ownerId,
+      agentId,
+      sourceId,
+      "uploaded",
+      "preview",
+      "awaiting_upload",
+    );
+    if (updated) return updated;
+    const current = await this.findSource(ownerId, agentId, sourceId);
+    if (current.status === "uploaded" || current.status === "scanning" || current.status === "processing") {
+      return current;
+    }
+    throw new WorkspaceStateConflictError("This video upload can no longer be completed.");
   }
 
   async markSourceFailed(ownerId: string, agentId: string, sourceId: string) {
-    return this.updateSourceStatus(ownerId, agentId, sourceId, "failed", "disabled");
+    const updated = await this.updateSourceStatus(
+      ownerId,
+      agentId,
+      sourceId,
+      "failed",
+      "disabled",
+      "awaiting_upload",
+    );
+    if (updated) return updated;
+    await this.findSource(ownerId, agentId, sourceId);
+    throw new WorkspaceStateConflictError("This video upload can no longer be failed.");
   }
 
   private async updateSourceStatus(
@@ -422,13 +445,24 @@ export class PostgresWorkspaceRepository implements WorkspaceRepository {
     sourceId: string,
     status: SourceStatus,
     visibility: SourceVisibility,
+    expectedStatus: SourceStatus,
   ) {
     const result = await this.pool.query<SourceRow>(
       `UPDATE sources
        SET status = $4, visibility = $5, updated_at = now()
-       WHERE owner_id = $1 AND agent_id = $2 AND id = $3 AND deleted_at IS NULL
+       WHERE owner_id = $1 AND agent_id = $2 AND id = $3 AND status = $6 AND deleted_at IS NULL
        RETURNING id, owner_id, agent_id, title, type, status, visibility, created_at, updated_at`,
-      [ownerId, agentId, sourceId, status, visibility],
+      [ownerId, agentId, sourceId, status, visibility, expectedStatus],
+    );
+    return result.rows[0] ? mapSource(result.rows[0]) : null;
+  }
+
+  private async findSource(ownerId: string, agentId: string, sourceId: string) {
+    const result = await this.pool.query<SourceRow>(
+      `SELECT id, owner_id, agent_id, title, type, status, visibility, created_at, updated_at
+       FROM sources
+       WHERE owner_id = $1 AND agent_id = $2 AND id = $3 AND deleted_at IS NULL`,
+      [ownerId, agentId, sourceId],
     );
     if (!result.rows[0]) throw new WorkspaceRecordNotFoundError("Source not found.");
     return mapSource(result.rows[0]);

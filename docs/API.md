@@ -58,6 +58,14 @@ npm run db:migrate
 npm run dev:api
 ```
 
+To claim and preliminarily scan one completed upload without any AI call:
+
+```bash
+npm run scan:once
+```
+
+The one-shot command uses the same server-only database/storage configuration, prints only opaque job metadata plus `aiCalls: 0`, and exits after one source or an idle result. Run it from a controlled scheduler only after migration 005. It does not perform malware scanning or transcription.
+
 The API listens on `http://127.0.0.1:4320`. Set `VITE_CREATOR_API_URL=http://127.0.0.1:4320` in the simulator's `.env.local`, restart the simulator, and complete Auth0 login.
 
 ## Persisted identity data
@@ -69,7 +77,7 @@ The identity and workspace tables store:
 - Creation and last-seen timestamps
 - A deletion timestamp when access is revoked
 - Agent name, description, draft/publication state, and immutable configuration versions
-- Source title, media type, processing status, private/public/disabled visibility, opaque storage key, expected content type/size, and upload-policy expiry
+- Source title, media type, processing status, private/public/disabled visibility, opaque storage key, expected content type/size, upload-policy expiry, preliminary scan lease/attempt/timestamps, detected type, and bounded failure code
 
 PostgreSQL does not store access tokens, passwords, email addresses, display names, profile images, uploaded bytes, transcripts, extracted text, storage credentials, or AI-provider credentials. Uploaded bytes live only in the configured private object store. A unique `(auth_issuer, auth_subject)` constraint provides stable mapping under concurrent logins. A deleted identity is not automatically reactivated.
 

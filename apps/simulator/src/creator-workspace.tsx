@@ -34,7 +34,7 @@ export interface DurableSource {
   agentId: string;
   title: string;
   type: DurableSourceType;
-  status: "awaiting_upload" | "uploaded" | "processing" | "ready" | "failed" | "deleting";
+  status: "awaiting_upload" | "uploaded" | "scanning" | "processing" | "ready" | "failed" | "deleting";
   visibility: DurableSourceVisibility;
   createdAt: string;
   updatedAt: string;
@@ -474,7 +474,7 @@ function durableSource(value: unknown): DurableSource {
     typeof source.id !== "string" || typeof source.agentId !== "string" ||
     typeof source.title !== "string" ||
     (source.type !== "document" && source.type !== "audio" && source.type !== "video") ||
-    (source.status !== "awaiting_upload" && source.status !== "uploaded" &&
+    (source.status !== "awaiting_upload" && source.status !== "uploaded" && source.status !== "scanning" &&
       source.status !== "processing" && source.status !== "ready" &&
       source.status !== "failed" && source.status !== "deleting") ||
     (source.visibility !== "preview" && source.visibility !== "public" && source.visibility !== "disabled") ||

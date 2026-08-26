@@ -10,6 +10,7 @@ The current ingestion slice accepts MP4 files up to 250 MB in configured Auth0 m
 4. The browser posts a multipart form directly to the signed storage URL. It does not attach the Auth0 access token or receive long-lived storage credentials.
 5. The browser calls the authenticated completion route. The API performs a server-side metadata lookup and requires the stored size and type to match the authorization.
 6. A match becomes `uploaded` and remains preview-only. A mismatch is deleted and marked `failed`/disabled. Neither state can enter public retrieval.
+7. When an operator schedules `npm run scan:once`, the worker exclusively leases at most one uploaded source, reads at most 4 KB, and checks its ISO BMFF `ftyp` structure and supported MP4 brand. A pass becomes `processing` (awaiting transcription); an invalid prefix is deleted and marked `failed`/disabled.
 
 The storage key contains no filename, creator name, email address, Auth0 subject, agent title, or source title. Owner/source relationships remain in PostgreSQL and every lookup is scoped by the verified internal owner ID.
 
@@ -38,6 +39,8 @@ The bucket must be private and its browser CORS policy should allow only the exa
 - The API never accepts or proxies video bytes.
 - Policy expiry, key, declared type, and exact size are server-controlled.
 - Completion rechecks stored metadata before changing state.
+- The preliminary scanner uses `FOR UPDATE SKIP LOCKED`, an opaque lease UUID, a 15-minute stale-lease threshold, and at most three read attempts so concurrent workers cannot complete the same claim.
+- Object reads request and enforce a maximum 4 KB range; a provider that returns more fails closed.
 - Stored objects and metadata are not returned by public or preview chat.
 - Source deletion tombstones it for serving before deleting its stored object.
 - Unit tests cover owner isolation, malformed metadata, unavailable storage, mismatch cleanup, and bearer-token separation.
@@ -45,7 +48,7 @@ The bucket must be private and its browser CORS policy should allow only the exa
 
 ## Not yet guaranteed
 
-Do not treat `uploaded` as trusted content. The next worker boundary must independently verify MP4 magic bytes/container structure, detect the real media type, enforce duration and codec limits, run malware scanning in a sandbox, calculate a checksum, and quarantine failures before transcription. It must be idempotent and must never make content `ready` automatically.
+Do not treat `uploaded` or `processing` as trusted/ready content. The current `ftyp` check establishes only that a small prefix resembles a supported ISO Base Media File Format container; it does not prove that the full file is safe, decodable, complete, or truly contains the declared media. The next sandboxed boundary must fully parse the container, detect the real media type, enforce duration and codec limits, run malware scanning, calculate a checksum, and quarantine failures before transcription. It must be idempotent and must never make content `ready` automatically.
 
 The current synchronous delete is safe for serving because it tombstones metadata first, but production still needs an outbox-backed deletion worker, retries, orphan reconciliation, audit events, lifecycle policies, backup expiry, and a visible deletion service-level target. Multipart/resumable upload and abandoned-policy cleanup are also future work.
 
