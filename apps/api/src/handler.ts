@@ -68,6 +68,13 @@ export async function handleApiRequest(
     }
 
     const sourceItem = SOURCE_ITEM_PATTERN.exec(request.path);
+    if (sourceItem && request.method === "DELETE") {
+      const creator = await authorize(request, dependencies, "write:agent");
+      const agentId = resourceId(sourceItem[1], "agent ID");
+      const sourceId = resourceId(sourceItem[2], "source ID");
+      await dependencies.workspace.deleteSource(creator.id, agentId, sourceId);
+      return { status: 200, body: { deleted: true } };
+    }
     if (sourceItem && request.method === "PATCH") {
       const creator = await authorize(request, dependencies, "write:agent");
       const agentId = resourceId(sourceItem[1], "agent ID");
@@ -191,6 +198,25 @@ function boundaryList(body: Record<string, unknown>, required: boolean) {
   return [...new Set(cleaned)];
 }
 
+function stringList(
+  body: Record<string, unknown>,
+  field: string,
+  options: { required: boolean; maximumItems: number; maximumLength: number },
+) {
+  const value = body[field];
+  if (value === undefined && !options.required) return undefined;
+  if (!Array.isArray(value) || value.length > options.maximumItems) {
+    throw new RequestValidationError(`${field} must be an array with at most ${options.maximumItems} items.`);
+  }
+  const cleaned = value.map((item) => {
+    if (typeof item !== "string" || !item.trim() || item.trim().length > options.maximumLength) {
+      throw new RequestValidationError(`Each ${field} item must be a non-empty string of at most ${options.maximumLength} characters.`);
+    }
+    return item.trim();
+  });
+  return [...new Set(cleaned)];
+}
+
 function rejectUnknown(body: Record<string, unknown>, allowed: readonly string[]) {
   const unknown = Object.keys(body).find((key) => !allowed.includes(key));
   if (unknown) throw new RequestValidationError(`Unknown field: ${unknown}.`);
@@ -198,19 +224,30 @@ function rejectUnknown(body: Record<string, unknown>, allowed: readonly string[]
 
 function parseCreateAgent(body: unknown): CreateAgentInput {
   const input = objectBody(body);
-  rejectUnknown(input, ["name", "description", "instructions", "tone", "boundaries"]);
+  rejectUnknown(input, [
+    "name", "description", "instructions", "tone", "boundaries", "stylePreset",
+    "responseLength", "signaturePhrases", "prohibitedTopics", "greeting",
+  ]);
   return {
     name: text(input, "name", 80, { required: true })!,
     description: text(input, "description", 500, { defaultValue: "" })!,
     instructions: text(input, "instructions", 4000, { defaultValue: "" })!,
     tone: text(input, "tone", 500, { defaultValue: "" })!,
-    boundaries: boundaryList(input, true)!,
+    boundaries: boundaryList(input, false) ?? [],
+    stylePreset: stylePreset(input.stylePreset, true)!,
+    responseLength: responseLength(input.responseLength, true)!,
+    signaturePhrases: stringList(input, "signaturePhrases", { required: false, maximumItems: 20, maximumLength: 120 }) ?? [],
+    prohibitedTopics: stringList(input, "prohibitedTopics", { required: false, maximumItems: 20, maximumLength: 120 }) ?? [],
+    greeting: text(input, "greeting", 500, { defaultValue: "" })!,
   };
 }
 
 function parseUpdateAgent(body: unknown): UpdateAgentInput {
   const input = objectBody(body);
-  const allowed = ["name", "description", "instructions", "tone", "boundaries"];
+  const allowed = [
+    "name", "description", "instructions", "tone", "boundaries", "stylePreset",
+    "responseLength", "signaturePhrases", "prohibitedTopics", "greeting",
+  ];
   rejectUnknown(input, allowed);
   if (!allowed.some((field) => input[field] !== undefined)) {
     throw new RequestValidationError("At least one agent field is required.");
@@ -221,7 +258,30 @@ function parseUpdateAgent(body: unknown): UpdateAgentInput {
     instructions: text(input, "instructions", 4000),
     tone: text(input, "tone", 500),
     boundaries: boundaryList(input, false),
+    stylePreset: stylePreset(input.stylePreset, false),
+    responseLength: responseLength(input.responseLength, false),
+    signaturePhrases: stringList(input, "signaturePhrases", { required: false, maximumItems: 20, maximumLength: 120 }),
+    prohibitedTopics: stringList(input, "prohibitedTopics", { required: false, maximumItems: 20, maximumLength: 120 }),
+    greeting: text(input, "greeting", 500),
   };
+}
+
+function stylePreset(value: unknown, useDefault: boolean) {
+  if (value === undefined && useDefault) return "warm" as const;
+  if (value === undefined) return undefined;
+  if (value !== "warm" && value !== "direct" && value !== "curious" && value !== "custom") {
+    throw new RequestValidationError("stylePreset must be warm, direct, curious, or custom.");
+  }
+  return value;
+}
+
+function responseLength(value: unknown, useDefault: boolean) {
+  if (value === undefined && useDefault) return "balanced" as const;
+  if (value === undefined) return undefined;
+  if (value !== "short" && value !== "balanced" && value !== "deep") {
+    throw new RequestValidationError("responseLength must be short, balanced, or deep.");
+  }
+  return value;
 }
 
 function parseCreateSource(body: unknown): CreateSourceInput {

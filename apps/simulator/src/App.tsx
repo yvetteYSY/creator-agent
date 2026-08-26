@@ -38,7 +38,7 @@ import {
   type StylePreset,
 } from "@creator-agent/core";
 import { useCreatorAuth } from "./auth";
-import { useCreatorWorkspace } from "./creator-workspace";
+import { DEFAULT_DURABLE_AGENT, useCreatorWorkspace, type DurableAgent } from "./creator-workspace";
 
 type View = "studio" | "customize" | "preview" | "routing" | "load";
 type AudienceId = "maya" | "theo" | "jules";
@@ -52,22 +52,21 @@ const AUDIENCE: Array<{ id: AudienceId; name: string; color: string }> = [
   { id: "jules", name: "Jules", color: "gold" },
 ];
 
-function createRuntime(ownerId: string) {
+function createRuntime(ownerId: string, durableAgent?: DurableAgent) {
   const engine = new CreatorAgentEngine();
+  const configuration = durableAgent?.configuration;
   const agent = engine.createAgent({
     ownerId,
-    name: "Ari's Creative Coach",
+    name: durableAgent?.name ?? DEFAULT_DURABLE_AGENT.name,
     handle: "ari-creates",
-    description:
-      "Practical guidance for building an audience and a sustainable creative practice.",
-    tone: "Warm, concise, encouraging, and specific",
-    stylePreset: "warm",
-    responseLength: "balanced",
-    signaturePhrases: ["Make the next step small enough to start."],
-    prohibitedTopics: ["Individual financial advice", "Private relationships"],
-    boundaries:
-      "Stay within approved sources. Never invent private opinions, personal details, or financial advice.",
-    greeting: "What are you trying to create this week?",
+    description: durableAgent?.description ?? DEFAULT_DURABLE_AGENT.description,
+    tone: configuration?.tone ?? DEFAULT_DURABLE_AGENT.tone,
+    stylePreset: configuration?.stylePreset ?? DEFAULT_DURABLE_AGENT.stylePreset,
+    responseLength: configuration?.responseLength ?? DEFAULT_DURABLE_AGENT.responseLength,
+    signaturePhrases: configuration?.signaturePhrases ?? DEFAULT_DURABLE_AGENT.signaturePhrases,
+    prohibitedTopics: configuration?.prohibitedTopics ?? DEFAULT_DURABLE_AGENT.prohibitedTopics,
+    boundaries: configuration?.boundaries[0] ?? DEFAULT_DURABLE_AGENT.boundaries[0],
+    greeting: configuration?.greeting ?? DEFAULT_DURABLE_AGENT.greeting,
   });
 
   engine.addSource({
@@ -121,11 +120,15 @@ function formatBytes(bytes: number) {
 export function App() {
   const auth = useCreatorAuth();
   const workspace = useCreatorWorkspace();
-  const runtime = useMemo(() => createRuntime(workspace.creatorId!), [workspace.creatorId]);
+  const runtime = useMemo(
+    () => createRuntime(workspace.creatorId!, workspace.agent),
+    [workspace.creatorId],
+  );
   const [view, setView] = useState<View>("studio");
   const [route, setRoute] = useState<AgentRoute>({ mode: "local" });
   const [revision, setRevision] = useState(0);
   const [notice, setNotice] = useState("");
+  const [durableSourceIds, setDurableSourceIds] = useState<Record<string, string>>({});
   const agent = runtime.engine.getAgent(runtime.agentId);
   const sources = runtime.engine.listSources(runtime.ownerId, runtime.agentId);
 
@@ -164,7 +167,7 @@ export function App() {
             {route.mode === "local" ? <LockKeyhole aria-hidden="true" /> : <Cable aria-hidden="true" />}
             {route.mode === "local" ? "Local · $0 AI spend" : "User-owned route"}
           </span>
-          <span className="auth-label">{auth.mode === "local" ? "Local session" : "Auth0"}</span>
+          <span className="auth-label">{auth.mode === "local" ? "Local session" : "Auth0 · synced"}</span>
           <div className="creator-account">
             {auth.user!.picture ? <img className="creator-avatar" src={auth.user!.picture} alt="" referrerPolicy="no-referrer" /> : <span className="creator-avatar" aria-hidden="true">{auth.user!.initials}</span>}
             <span className="creator-account-copy"><strong>{auth.user!.name}</strong><small>{auth.user!.email ?? "OIDC account"}</small></span>
@@ -186,28 +189,72 @@ export function App() {
             agent={agent}
             sources={sources}
             onAddSource={(input) => {
-              runtime.engine.addSource({
+              const source = runtime.engine.addSource({
                 ownerId: runtime.ownerId,
                 agentId: runtime.agentId,
                 ...input,
               });
-              refresh("Source processed locally and added to the agent.");
+              refresh(workspace.isPersistent
+                ? "Source processed locally; saving private metadata to your workspace."
+                : "Source processed locally and added to the agent.");
+              void workspace.createSource({ title: input.title, type: input.kind }).then(
+                (durable) => {
+                  if (!durable) return;
+                  setDurableSourceIds((current) => ({ ...current, [source.id]: durable.id }));
+                  refresh("Source metadata saved privately. Content remains only in this browser.");
+                },
+                () => refresh("The local source is available, but its metadata could not be saved."),
+              );
             }}
             onStageVideo={(input) => {
-              runtime.engine.stageVideoSource({
+              const source = runtime.engine.stageVideoSource({
                 ownerId: runtime.ownerId,
                 agentId: runtime.agentId,
                 ...input,
               });
               refresh("Video staged locally. It will remain unavailable to answers until transcription is configured.");
+              void workspace.createSource({ title: input.title, type: "video" }).then(
+                (durable) => {
+                  if (!durable) return;
+                  setDurableSourceIds((current) => ({ ...current, [source.id]: durable.id }));
+                  refresh("Video metadata saved privately. No video bytes were uploaded.");
+                },
+                () => refresh("The video remains staged locally, but its metadata could not be saved."),
+              );
             }}
             onVisibility={(sourceId, visibility) => {
+              const previous = runtime.engine.listSources(runtime.ownerId, runtime.agentId)
+                .find((source) => source.id === sourceId)?.visibility;
               runtime.engine.setSourceVisibility(runtime.ownerId, sourceId, visibility);
               refresh(visibility === "public" ? "Source approved for public answers." : "Source moved to preview only.");
+              const durableId = durableSourceIds[sourceId];
+              if (durableId) {
+                void workspace.setSourceVisibility(durableId, visibility).then(
+                  () => refresh(visibility === "public" ? "Source visibility saved." : "Private visibility saved."),
+                  (error: unknown) => {
+                    if (previous) runtime.engine.setSourceVisibility(runtime.ownerId, sourceId, previous);
+                    refresh(error instanceof Error ? error.message : "Source visibility could not be saved.");
+                  },
+                );
+              }
             }}
             onDelete={(sourceId) => {
               runtime.engine.deleteSource(runtime.ownerId, sourceId);
               refresh("Source and its simulated derived data were deleted.");
+              const durableId = durableSourceIds[sourceId];
+              if (durableId) {
+                void workspace.deleteSource(durableId).then(
+                  () => {
+                    setDurableSourceIds((current) => {
+                      const next = { ...current };
+                      delete next[sourceId];
+                      return next;
+                    });
+                    refresh("Source metadata was also deleted from the durable workspace.");
+                  },
+                  () => refresh("Local data was deleted, but durable metadata deletion must be retried."),
+                );
+              }
             }}
             onPreview={() => setView("preview")}
             onCustomize={() => setView("customize")}
@@ -219,7 +266,23 @@ export function App() {
             agent={agent}
             onSave={(patch) => {
               runtime.engine.updateAgent(runtime.ownerId, runtime.agentId, patch);
-              refresh("Customization saved as a new agent version.");
+              refresh(workspace.isPersistent
+                ? "Customization applied locally; saving a durable version."
+                : "Customization saved as a new agent version.");
+              void workspace.saveAgent({
+                tone: patch.tone,
+                stylePreset: patch.stylePreset,
+                responseLength: patch.responseLength,
+                signaturePhrases: patch.signaturePhrases,
+                prohibitedTopics: patch.prohibitedTopics,
+                boundaries: patch.boundaries === undefined ? undefined : [patch.boundaries],
+                greeting: patch.greeting,
+              }).then(
+                (saved) => {
+                  if (saved) refresh(`Customization saved as durable version ${saved.configurationVersion}.`);
+                },
+                () => refresh("Customization is active locally, but the durable version could not be saved."),
+              );
             }}
             onPreview={() => setView("preview")}
           />

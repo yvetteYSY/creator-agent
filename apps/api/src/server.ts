@@ -56,7 +56,7 @@ const server = createServer(async (request, response) => {
   if (request.method === "OPTIONS") {
     response.writeHead(204, {
       "access-control-allow-origin": configuration.allowedOrigin,
-      "access-control-allow-methods": "GET, POST, PATCH, OPTIONS",
+      "access-control-allow-methods": "GET, POST, PATCH, DELETE, OPTIONS",
       "access-control-allow-headers": "authorization, content-type",
       "access-control-max-age": "600",
       vary: "origin",

@@ -65,6 +65,11 @@ class MemoryWorkspace implements WorkspaceRepository {
         instructions: input.instructions,
         tone: input.tone,
         boundaries: input.boundaries,
+        stylePreset: input.stylePreset,
+        responseLength: input.responseLength,
+        signaturePhrases: input.signaturePhrases,
+        prohibitedTopics: input.prohibitedTopics,
+        greeting: input.greeting,
       },
       createdAt: NOW,
       updatedAt: NOW,
@@ -84,6 +89,11 @@ class MemoryWorkspace implements WorkspaceRepository {
         instructions: input.instructions ?? current.configuration.instructions,
         tone: input.tone ?? current.configuration.tone,
         boundaries: input.boundaries ?? current.configuration.boundaries,
+        stylePreset: input.stylePreset ?? current.configuration.stylePreset,
+        responseLength: input.responseLength ?? current.configuration.responseLength,
+        signaturePhrases: input.signaturePhrases ?? current.configuration.signaturePhrases,
+        prohibitedTopics: input.prohibitedTopics ?? current.configuration.prohibitedTopics,
+        greeting: input.greeting ?? current.configuration.greeting,
       },
     };
     this.agents.set(agentId, record);
@@ -131,6 +141,14 @@ class MemoryWorkspace implements WorkspaceRepository {
     this.sources.set(sourceId, record);
     return record;
   }
+
+  async deleteSource(ownerId: string, agentId: string, sourceId: string) {
+    const source = this.sources.get(sourceId);
+    if (!source || source.ownerId !== ownerId || source.agentId !== agentId) {
+      throw new WorkspaceRecordNotFoundError();
+    }
+    this.sources.delete(sourceId);
+  }
 }
 
 function principal(subject: string, scopes = ["read:creator", "write:agent"]): AuthenticatedPrincipal {
@@ -162,6 +180,11 @@ describe("durable creator workspace API", () => {
       instructions: "Use approved sources.",
       tone: "Warm and direct",
       boundaries: ["No financial advice", "No financial advice"],
+      stylePreset: "direct",
+      responseLength: "deep",
+      signaturePhrases: ["Start here."],
+      prohibitedTopics: ["Private relationships"],
+      greeting: "What are you building?",
     }), deps);
     expect(created.status).toBe(201);
     expect(JSON.stringify(created.body)).not.toContain("ownerId");
@@ -170,7 +193,12 @@ describe("durable creator workspace API", () => {
         id: AGENT_A,
         status: "draft",
         configurationVersion: 1,
-        configuration: { boundaries: ["No financial advice"] },
+        configuration: {
+          boundaries: ["No financial advice"],
+          stylePreset: "direct",
+          responseLength: "deep",
+          signaturePhrases: ["Start here."],
+        },
       },
     });
 
@@ -224,6 +252,11 @@ describe("durable creator workspace API", () => {
       status: 409,
       body: { error: "Only a ready source can become public." },
     });
+    expect(await handleApiRequest(request(
+      "DELETE",
+      `/v1/agents/${AGENT_A}/sources/${SOURCE_A}`,
+    ), deps)).toEqual({ status: 200, body: { deleted: true } });
+    expect(workspace.sources.size).toBe(0);
   });
 
   it("returns the same generic 404 for another creator's agent and source", async () => {
@@ -242,6 +275,7 @@ describe("durable creator workspace API", () => {
       await handleApiRequest(request("PATCH", `/v1/agents/${AGENT_A}`, { name: "Hijacked" }), creatorB),
       await handleApiRequest(request("GET", `/v1/agents/${AGENT_A}/sources`), creatorB),
       await handleApiRequest(request("PATCH", `/v1/agents/${AGENT_A}/sources/${SOURCE_A}`, { visibility: "public" }), creatorB),
+      await handleApiRequest(request("DELETE", `/v1/agents/${AGENT_A}/sources/${SOURCE_A}`), creatorB),
     ]) {
       expect(response).toEqual({ status: 404, body: { error: "Not found." } });
     }

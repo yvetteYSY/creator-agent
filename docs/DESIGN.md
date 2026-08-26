@@ -288,6 +288,7 @@ POST   /v1/agents/:agentId/unpublish
 GET    /v1/agents/:agentId/sources
 POST   /v1/agents/:agentId/sources
 PATCH  /v1/agents/:agentId/sources/:sourceId
+DELETE /v1/agents/:agentId/sources/:sourceId
 POST   /v1/agents/:agentId/sources/uploads
 POST   /v1/agents/:agentId/sources/:sourceId/complete
 POST   /v1/agents/:agentId/sources/:sourceId/retry

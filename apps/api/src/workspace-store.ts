@@ -5,11 +5,18 @@ export type AgentStatus = "draft" | "published" | "unpublished";
 export type SourceType = "document" | "audio" | "video";
 export type SourceStatus = "awaiting_upload" | "uploaded" | "processing" | "ready" | "failed" | "deleting";
 export type SourceVisibility = "preview" | "public" | "disabled";
+export type StylePreset = "warm" | "direct" | "curious" | "custom";
+export type ResponseLength = "short" | "balanced" | "deep";
 
 export interface AgentConfigurationRecord {
   instructions: string;
   tone: string;
   boundaries: string[];
+  stylePreset: StylePreset;
+  responseLength: ResponseLength;
+  signaturePhrases: string[];
+  prohibitedTopics: string[];
+  greeting: string;
 }
 
 export interface AgentRecord {
@@ -35,6 +42,11 @@ export interface UpdateAgentInput {
   instructions?: string;
   tone?: string;
   boundaries?: string[];
+  stylePreset?: StylePreset;
+  responseLength?: ResponseLength;
+  signaturePhrases?: string[];
+  prohibitedTopics?: string[];
+  greeting?: string;
 }
 
 export interface SourceRecord {
@@ -62,6 +74,7 @@ export interface WorkspaceRepository {
   listSources(ownerId: string, agentId: string): Promise<SourceRecord[]>;
   createSource(ownerId: string, agentId: string, input: CreateSourceInput): Promise<SourceRecord>;
   updateSourceVisibility(ownerId: string, agentId: string, sourceId: string, visibility: SourceVisibility): Promise<SourceRecord>;
+  deleteSource(ownerId: string, agentId: string, sourceId: string): Promise<void>;
 }
 
 export class WorkspaceRecordNotFoundError extends Error {}
@@ -77,6 +90,11 @@ interface AgentRow {
   instructions: string;
   tone: string;
   boundaries: unknown;
+  style_preset: StylePreset;
+  response_length: ResponseLength;
+  signature_phrases: unknown;
+  prohibited_topics: unknown;
+  greeting: string;
   created_at: Date | string;
   updated_at: Date | string;
 }
@@ -95,7 +113,8 @@ interface SourceRow {
 
 const AGENT_SELECT = `SELECT a.id, a.owner_id, a.name, a.description, a.status,
   a.configuration_version, a.created_at, a.updated_at,
-  c.instructions, c.tone, c.boundaries
+  c.instructions, c.tone, c.boundaries, c.style_preset, c.response_length,
+  c.signature_phrases, c.prohibited_topics, c.greeting
   FROM agents a
   JOIN agent_configs c
     ON c.agent_id = a.id AND c.owner_id = a.owner_id AND c.version = a.configuration_version`;
@@ -120,6 +139,11 @@ function mapAgent(row: AgentRow): AgentRecord {
       instructions: row.instructions,
       tone: row.tone,
       boundaries: boundaries(row.boundaries),
+      stylePreset: row.style_preset,
+      responseLength: row.response_length,
+      signaturePhrases: boundaries(row.signature_phrases),
+      prohibitedTopics: boundaries(row.prohibited_topics),
+      greeting: row.greeting,
     },
     createdAt: iso(row.created_at),
     updatedAt: iso(row.updated_at),
@@ -175,9 +199,22 @@ export class PostgresWorkspaceRepository implements WorkspaceRepository {
         [id, ownerId, input.name, input.description],
       );
       await client.query(
-        `INSERT INTO agent_configs (agent_id, owner_id, version, instructions, tone, boundaries)
-         VALUES ($1, $2, 1, $3, $4, $5::jsonb)`,
-        [id, ownerId, input.instructions, input.tone, JSON.stringify(input.boundaries)],
+        `INSERT INTO agent_configs (
+           agent_id, owner_id, version, instructions, tone, boundaries,
+           style_preset, response_length, signature_phrases, prohibited_topics, greeting
+         ) VALUES ($1, $2, 1, $3, $4, $5::jsonb, $6, $7, $8::jsonb, $9::jsonb, $10)`,
+        [
+          id,
+          ownerId,
+          input.instructions,
+          input.tone,
+          JSON.stringify(input.boundaries),
+          input.stylePreset,
+          input.responseLength,
+          JSON.stringify(input.signaturePhrases),
+          JSON.stringify(input.prohibitedTopics),
+          input.greeting,
+        ],
       );
       await client.query("COMMIT");
       return mapAgent({
@@ -185,6 +222,11 @@ export class PostgresWorkspaceRepository implements WorkspaceRepository {
         instructions: input.instructions,
         tone: input.tone,
         boundaries: input.boundaries,
+        style_preset: input.stylePreset,
+        response_length: input.responseLength,
+        signature_phrases: input.signaturePhrases,
+        prohibited_topics: input.prohibitedTopics,
+        greeting: input.greeting,
       });
     } catch (error) {
       await rollback(client);
@@ -218,14 +260,43 @@ export class PostgresWorkspaceRepository implements WorkspaceRepository {
         instructions: input.instructions ?? current.instructions,
         tone: input.tone ?? current.tone,
         boundaries: input.boundaries ?? boundaries(current.boundaries),
+        stylePreset: input.stylePreset ?? current.style_preset,
+        responseLength: input.responseLength ?? current.response_length,
+        signaturePhrases: input.signaturePhrases ?? boundaries(current.signature_phrases),
+        prohibitedTopics: input.prohibitedTopics ?? boundaries(current.prohibited_topics),
+        greeting: input.greeting ?? current.greeting,
       };
       await client.query(
-        `INSERT INTO agent_configs (agent_id, owner_id, version, instructions, tone, boundaries)
-         VALUES ($1, $2, $3, $4, $5, $6::jsonb)`,
-        [agentId, ownerId, nextVersion, nextConfiguration.instructions, nextConfiguration.tone, JSON.stringify(nextConfiguration.boundaries)],
+        `INSERT INTO agent_configs (
+           agent_id, owner_id, version, instructions, tone, boundaries,
+           style_preset, response_length, signature_phrases, prohibited_topics, greeting
+         ) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9::jsonb, $10::jsonb, $11)`,
+        [
+          agentId,
+          ownerId,
+          nextVersion,
+          nextConfiguration.instructions,
+          nextConfiguration.tone,
+          JSON.stringify(nextConfiguration.boundaries),
+          nextConfiguration.stylePreset,
+          nextConfiguration.responseLength,
+          JSON.stringify(nextConfiguration.signaturePhrases),
+          JSON.stringify(nextConfiguration.prohibitedTopics),
+          nextConfiguration.greeting,
+        ],
       );
       await client.query("COMMIT");
-      return mapAgent({ ...updatedResult.rows[0]!, ...nextConfiguration });
+      return mapAgent({
+        ...updatedResult.rows[0]!,
+        instructions: nextConfiguration.instructions,
+        tone: nextConfiguration.tone,
+        boundaries: nextConfiguration.boundaries,
+        style_preset: nextConfiguration.stylePreset,
+        response_length: nextConfiguration.responseLength,
+        signature_phrases: nextConfiguration.signaturePhrases,
+        prohibited_topics: nextConfiguration.prohibitedTopics,
+        greeting: nextConfiguration.greeting,
+      });
     } catch (error) {
       await rollback(client);
       throw error;
@@ -283,6 +354,17 @@ export class PostgresWorkspaceRepository implements WorkspaceRepository {
       throw new WorkspaceStateConflictError("Only a ready source can become public.");
     }
     return mapSource(result.rows[0]);
+  }
+
+  async deleteSource(ownerId: string, agentId: string, sourceId: string) {
+    const result = await this.pool.query(
+      `UPDATE sources
+       SET status = 'deleting', visibility = 'disabled', deleted_at = now(), updated_at = now()
+       WHERE owner_id = $1 AND agent_id = $2 AND id = $3 AND deleted_at IS NULL
+       RETURNING id`,
+      [ownerId, agentId, sourceId],
+    );
+    if (!result.rows[0]) throw new WorkspaceRecordNotFoundError("Source not found.");
   }
 }
 

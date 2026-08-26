@@ -4,7 +4,11 @@ import { Pool } from "pg";
 const databaseUrl = process.env.DATABASE_URL?.trim();
 if (!databaseUrl) throw new Error("DATABASE_URL is required.");
 
-const migrations = ["001_creator_identities.sql", "002_creator_workspace.sql"];
+const migrations = [
+  "001_creator_identities.sql",
+  "002_creator_workspace.sql",
+  "003_agent_customization.sql",
+];
 const pool = new Pool({ connectionString: databaseUrl });
 const client = await pool.connect();
 
