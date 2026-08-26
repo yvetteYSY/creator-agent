@@ -3,12 +3,25 @@ import {
   readBearerToken,
   type AccessTokenVerifier,
 } from "./auth";
-import { CreatorAccessRevokedError, type CreatorRepository } from "./creator-store";
+import { CreatorAccessRevokedError, type CreatorRecord, type CreatorRepository } from "./creator-store";
+import {
+  WorkspaceRecordNotFoundError,
+  WorkspaceStateConflictError,
+  type AgentRecord,
+  type CreateAgentInput,
+  type CreateSourceInput,
+  type SourceRecord,
+  type SourceType,
+  type SourceVisibility,
+  type UpdateAgentInput,
+  type WorkspaceRepository,
+} from "./workspace-store";
 
 export interface ApiRequest {
   method: string;
   path: string;
   authorization?: string;
+  body?: unknown;
 }
 
 export interface ApiResponse {
@@ -19,7 +32,15 @@ export interface ApiResponse {
 export interface ApiDependencies {
   verifier: AccessTokenVerifier;
   creators: CreatorRepository;
+  workspace: WorkspaceRepository;
 }
+
+class RequestValidationError extends Error {}
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const AGENT_ITEM_PATTERN = /^\/v1\/agents\/([^/]+)$/;
+const SOURCE_COLLECTION_PATTERN = /^\/v1\/agents\/([^/]+)\/sources$/;
+const SOURCE_ITEM_PATTERN = /^\/v1\/agents\/([^/]+)\/sources\/([^/]+)$/;
 
 export async function handleApiRequest(
   request: ApiRequest,
@@ -29,27 +50,76 @@ export async function handleApiRequest(
     return { status: 200, body: { ok: true, service: "creator-agent-api", aiCalls: 0 } };
   }
 
-  if (request.method !== "GET" || request.path !== "/v1/me") {
-    return { status: 404, body: { error: "Not found." } };
-  }
-
   try {
-    const accessToken = readBearerToken(request.authorization);
-    const principal = await dependencies.verifier.verify(accessToken);
-    if (!principal.scopes.has("read:creator")) {
-      return { status: 403, body: { error: "Forbidden." } };
+    if (request.method === "GET" && request.path === "/v1/me") {
+      const creator = await authorize(request, dependencies, "read:creator");
+      return { status: 200, body: { creator: publicCreator(creator) } };
     }
-    const creator = await dependencies.creators.upsertIdentity(principal);
-    return {
-      status: 200,
-      body: {
-        creator: {
-          id: creator.id,
-          createdAt: creator.createdAt,
-          lastSeenAt: creator.lastSeenAt,
-        },
-      },
-    };
+
+    if (request.path === "/v1/agents" && request.method === "GET") {
+      const creator = await authorize(request, dependencies, "read:creator");
+      const agents = await dependencies.workspace.listAgents(creator.id);
+      return { status: 200, body: { agents: agents.map(publicAgent) } };
+    }
+    if (request.path === "/v1/agents" && request.method === "POST") {
+      const creator = await authorize(request, dependencies, "write:agent");
+      const agent = await dependencies.workspace.createAgent(creator.id, parseCreateAgent(request.body));
+      return { status: 201, body: { agent: publicAgent(agent) } };
+    }
+
+    const sourceItem = SOURCE_ITEM_PATTERN.exec(request.path);
+    if (sourceItem && request.method === "PATCH") {
+      const creator = await authorize(request, dependencies, "write:agent");
+      const agentId = resourceId(sourceItem[1], "agent ID");
+      const sourceId = resourceId(sourceItem[2], "source ID");
+      const visibility = parseVisibility(request.body);
+      const source = await dependencies.workspace.updateSourceVisibility(
+        creator.id,
+        agentId,
+        sourceId,
+        visibility,
+      );
+      return { status: 200, body: { source: publicSource(source) } };
+    }
+
+    const sourceCollection = SOURCE_COLLECTION_PATTERN.exec(request.path);
+    if (sourceCollection && request.method === "GET") {
+      const creator = await authorize(request, dependencies, "read:creator");
+      const agentId = resourceId(sourceCollection[1], "agent ID");
+      const sources = await dependencies.workspace.listSources(creator.id, agentId);
+      return { status: 200, body: { sources: sources.map(publicSource) } };
+    }
+    if (sourceCollection && request.method === "POST") {
+      const creator = await authorize(request, dependencies, "write:agent");
+      const agentId = resourceId(sourceCollection[1], "agent ID");
+      const source = await dependencies.workspace.createSource(
+        creator.id,
+        agentId,
+        parseCreateSource(request.body),
+      );
+      return { status: 201, body: { source: publicSource(source) } };
+    }
+
+    const agentItem = AGENT_ITEM_PATTERN.exec(request.path);
+    if (agentItem && request.method === "GET") {
+      const creator = await authorize(request, dependencies, "read:creator");
+      const agent = await dependencies.workspace.getAgent(
+        creator.id,
+        resourceId(agentItem[1], "agent ID"),
+      );
+      return { status: 200, body: { agent: publicAgent(agent) } };
+    }
+    if (agentItem && request.method === "PATCH") {
+      const creator = await authorize(request, dependencies, "write:agent");
+      const agent = await dependencies.workspace.updateAgent(
+        creator.id,
+        resourceId(agentItem[1], "agent ID"),
+        parseUpdateAgent(request.body),
+      );
+      return { status: 200, body: { agent: publicAgent(agent) } };
+    }
+
+    return { status: 404, body: { error: "Not found." } };
   } catch (error) {
     if (error instanceof AuthenticationError) {
       return { status: 401, body: { error: "Unauthorized." } };
@@ -57,6 +127,137 @@ export async function handleApiRequest(
     if (error instanceof CreatorAccessRevokedError) {
       return { status: 403, body: { error: "Forbidden." } };
     }
+    if (error instanceof RequestValidationError) {
+      return { status: 400, body: { error: error.message } };
+    }
+    if (error instanceof WorkspaceRecordNotFoundError) {
+      return { status: 404, body: { error: "Not found." } };
+    }
+    if (error instanceof WorkspaceStateConflictError) {
+      return { status: 409, body: { error: error.message } };
+    }
     throw error;
   }
+}
+
+async function authorize(
+  request: ApiRequest,
+  dependencies: ApiDependencies,
+  requiredScope: "read:creator" | "write:agent",
+) {
+  const accessToken = readBearerToken(request.authorization);
+  const principal = await dependencies.verifier.verify(accessToken);
+  if (!principal.scopes.has(requiredScope)) {
+    throw new CreatorAccessRevokedError("The access token lacks permission.");
+  }
+  return dependencies.creators.upsertIdentity(principal);
+}
+
+function objectBody(body: unknown) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    throw new RequestValidationError("Request body must be a JSON object.");
+  }
+  return body as Record<string, unknown>;
+}
+
+function text(
+  body: Record<string, unknown>,
+  field: string,
+  maximum: number,
+  options: { required?: boolean; defaultValue?: string } = {},
+) {
+  const value = body[field];
+  if (value === undefined && options.defaultValue !== undefined) return options.defaultValue;
+  if (value === undefined && !options.required) return undefined;
+  if (typeof value !== "string") throw new RequestValidationError(`${field} must be a string.`);
+  const cleaned = value.trim();
+  if (!cleaned && options.required) throw new RequestValidationError(`${field} is required.`);
+  if (cleaned.length > maximum) throw new RequestValidationError(`${field} must be at most ${maximum} characters.`);
+  return cleaned;
+}
+
+function boundaryList(body: Record<string, unknown>, required: boolean) {
+  const value = body.boundaries;
+  if (value === undefined && !required) return undefined;
+  if (!Array.isArray(value) || value.length > 20) {
+    throw new RequestValidationError("boundaries must be an array with at most 20 items.");
+  }
+  const cleaned = value.map((item) => {
+    if (typeof item !== "string" || !item.trim() || item.trim().length > 200) {
+      throw new RequestValidationError("Each boundary must be a non-empty string of at most 200 characters.");
+    }
+    return item.trim();
+  });
+  return [...new Set(cleaned)];
+}
+
+function rejectUnknown(body: Record<string, unknown>, allowed: readonly string[]) {
+  const unknown = Object.keys(body).find((key) => !allowed.includes(key));
+  if (unknown) throw new RequestValidationError(`Unknown field: ${unknown}.`);
+}
+
+function parseCreateAgent(body: unknown): CreateAgentInput {
+  const input = objectBody(body);
+  rejectUnknown(input, ["name", "description", "instructions", "tone", "boundaries"]);
+  return {
+    name: text(input, "name", 80, { required: true })!,
+    description: text(input, "description", 500, { defaultValue: "" })!,
+    instructions: text(input, "instructions", 4000, { defaultValue: "" })!,
+    tone: text(input, "tone", 500, { defaultValue: "" })!,
+    boundaries: boundaryList(input, true)!,
+  };
+}
+
+function parseUpdateAgent(body: unknown): UpdateAgentInput {
+  const input = objectBody(body);
+  const allowed = ["name", "description", "instructions", "tone", "boundaries"];
+  rejectUnknown(input, allowed);
+  if (!allowed.some((field) => input[field] !== undefined)) {
+    throw new RequestValidationError("At least one agent field is required.");
+  }
+  return {
+    name: text(input, "name", 80, { required: input.name !== undefined }),
+    description: text(input, "description", 500),
+    instructions: text(input, "instructions", 4000),
+    tone: text(input, "tone", 500),
+    boundaries: boundaryList(input, false),
+  };
+}
+
+function parseCreateSource(body: unknown): CreateSourceInput {
+  const input = objectBody(body);
+  rejectUnknown(input, ["title", "type"]);
+  const type = input.type;
+  if (type !== "document" && type !== "audio" && type !== "video") {
+    throw new RequestValidationError("type must be document, audio, or video.");
+  }
+  return { title: text(input, "title", 160, { required: true })!, type: type as SourceType };
+}
+
+function parseVisibility(body: unknown): SourceVisibility {
+  const input = objectBody(body);
+  rejectUnknown(input, ["visibility"]);
+  if (input.visibility !== "preview" && input.visibility !== "public" && input.visibility !== "disabled") {
+    throw new RequestValidationError("visibility must be preview, public, or disabled.");
+  }
+  return input.visibility;
+}
+
+function resourceId(value: string | undefined, label: string) {
+  if (!value || !UUID_PATTERN.test(value)) throw new RequestValidationError(`${label} must be a UUID.`);
+  return value;
+}
+
+function publicCreator(creator: CreatorRecord) {
+  return { id: creator.id, createdAt: creator.createdAt, lastSeenAt: creator.lastSeenAt };
+}
+
+function publicAgent(agent: AgentRecord) {
+  const { ownerId: _ownerId, ...safe } = agent;
+  return safe;
+}
+
+function publicSource(source: SourceRecord) {
+  const { ownerId: _ownerId, ...safe } = source;
+  return safe;
 }

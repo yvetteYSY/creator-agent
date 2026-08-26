@@ -15,6 +15,7 @@ The default simulator is intentionally deterministic and local. **It makes no AI
 | Managed creator authentication | Auth0 Universal Login uses OIDC Authorization Code with PKCE, in-memory token caching, stable `sub` identity, and login/logout/error states. Tenant configuration is required to exercise real login. |
 | Protected creator API | `GET /v1/me` validates Auth0 JWT signature, issuer, audience, expiration, `RS256`, subject, and `read:creator` permission before returning an internal creator ID. |
 | Durable creator identity | PostgreSQL maps verified `(issuer, sub)` values to an opaque internal UUID without storing profile data or access tokens. |
+| Owner-scoped workspace API | Authenticated routes create, list, read, and version agents plus private-by-default source metadata. Every database path includes the verified internal owner ID. |
 | Creator studio | A seeded creator can manage an agent and its knowledge sources in a responsive web interface. |
 | Text ingestion | Document or audio-transcript text can be pasted, chunked, and indexed in browser memory. |
 | Direct video selection | MP4, WebM, and QuickTime files up to 250 MB can be selected and staged locally. Only metadata is retained; the file is not uploaded. |
@@ -34,7 +35,7 @@ The default simulator is intentionally deterministic and local. **It makes no AI
 
 - State is held in memory and resets when the page refreshes.
 - The interface is a mobile-responsive web simulator, not yet an Expo/React Native app.
-- The protected API currently exposes only health and creator-identity endpoints. Agent content is still browser-memory state; durable agent/source storage, object storage, job queues, and deployment are not implemented.
+- The protected API persists creator identity, agents, versioned configuration, and source privacy metadata. The simulator studio is not yet synchronized to those workspace routes; source content, object storage, job queues, and deployment are not implemented.
 - Direct video bytes are not uploaded, decoded, transcribed, embedded, or stored.
 - Pasted text uses deterministic term matching rather than model-based embeddings or generation.
 - A real user-owned endpoint may create costs for its owner; Creator Agent never silently uses a platform or developer AI key.
@@ -107,8 +108,8 @@ Keep the current deterministic simulator as a zero-cost product demo and regress
 ### Iteration 1 — Durable creator workspace
 
 1. **Available:** connect the managed OIDC client to a protected API and durable user record.
-2. Add PostgreSQL migrations for agents, agent versions, sources, and source visibility.
-3. Enforce resource-level authorization and tenant isolation in every API query.
+2. **Available:** PostgreSQL migrations for agents, agent versions, sources, and source visibility.
+3. **Available for current routes:** resource-level authorization and tenant isolation in every workspace query.
 4. Persist creator configuration while leaving deterministic chat in place.
 
 **Exit test:** two signed-in creators cannot access or mutate each other's agents or sources.
@@ -207,8 +208,8 @@ The next production increment will persist agents and sources behind resource-sc
 
 ### Milestone 0 — Foundation
 
-- **Available:** npm workspace, deterministic core, responsive simulator, Auth0 SPA integration, protected creator API, durable identity migration, local reference endpoint, automated checks
-- **Next:** CI, persisted agent/source APIs, resource-level authorization, audit events
+- **Available:** npm workspace, deterministic core, responsive simulator, Auth0 SPA integration, protected creator/workspace API, durable identity and workspace migrations, local reference endpoint, automated checks
+- **Next:** synchronize simulator edits, persist audit events, CI
 
 ### Milestone 1 — Ingestion
 

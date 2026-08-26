@@ -188,7 +188,7 @@ export function CreatorAuthProvider({
       useRefreshTokens={false}
       authorizationParams={{
         redirect_uri: window.location.origin,
-        scope: "openid profile email read:creator",
+        scope: "openid profile email read:creator write:agent",
         ...(configuration.audience ? { audience: configuration.audience } : {}),
       }}
     >

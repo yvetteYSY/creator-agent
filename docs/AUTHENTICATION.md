@@ -27,7 +27,7 @@ The local session is a development convenience, not an identity provider. It ret
    - Allowed Logout URLs: `http://127.0.0.1:4173`
    - Allowed Web Origins: `http://127.0.0.1:4173`
 5. For each deployed environment, add its exact HTTPS origin. Do not use wildcard production callback URLs.
-6. Create a custom API, add a `read:creator` permission, and authorize the SPA to request it.
+6. Create a custom API, add `read:creator` and `write:agent` permissions, and authorize the SPA to request them.
 
 Auth0 documents these settings in its [React SPA quickstart](https://auth0.com/docs/quickstart/spa/react) and [application settings reference](https://auth0.com/docs/get-started/applications/application-settings).
 
@@ -63,7 +63,7 @@ The Creator Agent API is implemented as the first server-side slice:
 
 1. Register the API in Auth0 and choose a unique identifier, such as `https://api.creator-agent.example`.
 2. Set that identifier as `VITE_AUTH0_AUDIENCE` in the SPA.
-3. Add the Auth0 permission `read:creator` and authorize the SPA to request it.
+3. Add the Auth0 permissions `read:creator` and `write:agent` and authorize the SPA to request them.
 4. Configure `AUTH0_ISSUER_BASE_URL`, `AUTH0_AUDIENCE`, `DATABASE_URL`, and the exact browser origin on the API.
 5. Apply the identity migration and start the API as described in [API.md](API.md).
 
@@ -77,7 +77,7 @@ The client-side route guard improves user experience but is not an authorization
 - Universal Login; the app never handles passwords
 - In-memory token cache; no application-managed token persistence
 - Stable `(issuer, sub)` identity; email is mutable profile data
-- Dedicated `read:creator` API permission
+- Dedicated `read:creator` and `write:agent` API permissions
 - Server-derived opaque creator UUID; no client-supplied owner identity
 - Exact callback, logout, and web-origin allowlists
 - Local authentication unavailable in production

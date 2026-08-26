@@ -11,6 +11,9 @@ import {
 import { loadApiConfiguration } from "../src/config";
 import { PostgresCreatorRepository, type CreatorRecord, type CreatorRepository } from "../src/creator-store";
 import { handleApiRequest } from "../src/handler";
+import type { WorkspaceRepository } from "../src/workspace-store";
+
+const unusedWorkspace = {} as WorkspaceRepository;
 
 class MemoryCreatorRepository implements CreatorRepository {
   readonly records = new Map<string, CreatorRecord>();
@@ -123,7 +126,7 @@ describe("protected creator API", () => {
 
   it("derives a durable creator ID only from the verified token principal", async () => {
     const creators = new MemoryCreatorRepository();
-    const dependencies = { verifier: verifierFor(principal), creators };
+    const dependencies = { verifier: verifierFor(principal), creators, workspace: unusedWorkspace };
     const first = await handleApiRequest({
       method: "GET",
       path: "/v1/me",
@@ -167,7 +170,7 @@ describe("protected creator API", () => {
       method: "GET",
       path: "/v1/me",
       authorization: "Bearer invalid-token",
-    }, { verifier, creators });
+    }, { verifier, creators, workspace: unusedWorkspace });
     expect(response).toEqual({ status: 401, body: { error: "Unauthorized." } });
     expect(creators.records.size).toBe(0);
   });
@@ -181,6 +184,7 @@ describe("protected creator API", () => {
     }, {
       verifier: verifierFor({ ...principal, scopes: new Set() }),
       creators,
+      workspace: unusedWorkspace,
     });
     expect(response).toEqual({ status: 403, body: { error: "Forbidden." } });
     expect(creators.records.size).toBe(0);
@@ -208,6 +212,7 @@ describe("protected creator API", () => {
     const response = await handleApiRequest({ method: "GET", path: "/health" }, {
       verifier: verifierFor(principal),
       creators: new MemoryCreatorRepository(),
+      workspace: unusedWorkspace,
     });
     expect(response).toEqual({
       status: 200,

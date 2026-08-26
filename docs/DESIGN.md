@@ -278,15 +278,18 @@ Use UUIDs, explicit tenant keys, UTC timestamps, and soft deletion where immedia
 GET    /health
 GET    /v1/me
 
+GET    /v1/agents
 POST   /v1/agents
 GET    /v1/agents/:agentId
 PATCH  /v1/agents/:agentId
 POST   /v1/agents/:agentId/publish
 POST   /v1/agents/:agentId/unpublish
 
+GET    /v1/agents/:agentId/sources
+POST   /v1/agents/:agentId/sources
+PATCH  /v1/agents/:agentId/sources/:sourceId
 POST   /v1/agents/:agentId/sources/uploads
 POST   /v1/agents/:agentId/sources/:sourceId/complete
-GET    /v1/agents/:agentId/sources
 POST   /v1/agents/:agentId/sources/:sourceId/retry
 DELETE /v1/agents/:agentId/sources/:sourceId
 

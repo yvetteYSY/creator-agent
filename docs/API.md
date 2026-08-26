@@ -8,15 +8,26 @@ The first API slice resolves a signed-in Auth0 identity to a durable internal cr
 | --- | --- | --- |
 | `GET /health` | Public | Liveness response with `aiCalls: 0` |
 | `GET /v1/me` | Auth0 bearer token with `read:creator` | Upsert and return the caller's internal creator ID |
+| `GET /v1/agents` | `read:creator` | List only the caller's agents |
+| `POST /v1/agents` | `write:agent` | Create a draft agent and configuration version 1 |
+| `GET /v1/agents/:agentId` | `read:creator` | Read one caller-owned agent |
+| `PATCH /v1/agents/:agentId` | `write:agent` | Create a new immutable configuration snapshot |
+| `GET /v1/agents/:agentId/sources` | `read:creator` | List caller-owned source metadata |
+| `POST /v1/agents/:agentId/sources` | `write:agent` | Create private, awaiting-upload source metadata |
+| `PATCH /v1/agents/:agentId/sources/:sourceId` | `write:agent` | Change source visibility; public requires ready status |
 
-`/v1/me` accepts no owner identifier. The API derives ownership only after verifying the token signature, exact issuer, API audience, expiration, `RS256` algorithm, subject, and `read:creator` permission against the configured Auth0 tenant's JWKS.
+No route accepts an owner identifier. The API derives ownership only after verifying the token signature, exact issuer, API audience, expiration, `RS256` algorithm, subject, and required permission against the configured Auth0 tenant's JWKS. Agent and source SQL queries include the resulting internal owner UUID; another creator receives the same generic `404` as a nonexistent resource.
+
+Agent writes accept only `name`, `description`, `instructions`, `tone`, and a bounded string array named `boundaries`. Unknown fields are rejected. Every update creates a complete configuration version so active and historical behavior can be distinguished.
+
+Source creation accepts only a display `title` and `type` (`document`, `audio`, or `video`). It stores metadata with `status: awaiting_upload` and `visibility: preview`. This endpoint does not accept file bytes, transcript text, storage locations, checksums, or public visibility; private upload authorization is a later slice. The visibility route rejects an attempt to make a source public until ingestion has placed it in `ready` state.
 
 ## Configure Auth0
 
 1. In Auth0, create a custom API with identifier `https://api.creator-agent.example` or another unique URI.
 2. Use `RS256` signing.
-3. Add the permission `read:creator`.
-4. Authorize the Single Page Application to request that permission.
+3. Add the permissions `read:creator` and `write:agent`.
+4. Authorize the Single Page Application to request both permissions.
 5. Use the same identifier for `AUTH0_AUDIENCE` on the API and `VITE_AUTH0_AUDIENCE` in the simulator.
 
 ## Run locally
@@ -44,14 +55,18 @@ The API listens on `http://127.0.0.1:4320`. Set `VITE_CREATOR_API_URL=http://127
 
 ## Persisted identity data
 
-The `users` table stores only:
+The identity and workspace tables store:
 
 - An application-generated opaque UUID
 - The verified OIDC issuer and subject
 - Creation and last-seen timestamps
 - A deletion timestamp when access is revoked
+- Agent name, description, draft/publication state, and immutable configuration versions
+- Source title, media type, processing status, and private/public/disabled visibility
 
-It does not store access tokens, passwords, email addresses, display names, profile images, uploaded content, or AI-provider credentials. A unique `(auth_issuer, auth_subject)` constraint provides stable mapping under concurrent logins. A deleted identity is not automatically reactivated.
+They do not store access tokens, passwords, email addresses, display names, profile images, uploaded bytes, transcripts, extracted text, storage credentials, or AI-provider credentials. A unique `(auth_issuer, auth_subject)` constraint provides stable mapping under concurrent logins. A deleted identity is not automatically reactivated.
+
+Agent configuration history is append-only. Source rows redundantly carry the owner UUID and use a composite `(agent_id, owner_id)` foreign key, preventing a source from being attached to another creator's agent even if application code is incorrect. Migration names are recorded and pending migrations run in one transaction.
 
 ## Production boundary
 
@@ -61,5 +76,6 @@ It does not store access tokens, passwords, email addresses, display names, prof
 - Keep the Auth0 issuer and JWKS location operator-configured; never select them from unverified token claims.
 - Return generic authentication errors and never log bearer tokens.
 - Enforce resource ownership in every subsequent agents and sources query using the internal creator ID resolved by this boundary.
+- Keep titles and configuration values out of logs and traces because creators may place sensitive information in either field.
 
-The current local simulator still uses its explicit development-only identity and does not call this API. Real `/v1/me` integration requires a configured Auth0 tenant and PostgreSQL database.
+The current local simulator still uses its explicit development-only identity and does not call this API. Auth0 mode resolves `/v1/me`; wiring studio edits to the durable agent/source routes is the next client integration slice. Real protected integration requires a configured Auth0 tenant and PostgreSQL database.
