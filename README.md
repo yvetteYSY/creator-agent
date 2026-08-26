@@ -31,6 +31,7 @@ The default simulator is intentionally deterministic and local. **It makes no AI
 | Load lab | Adjustable traffic, concurrency, and queue limits demonstrate tenant-aware capacity and graceful overload. |
 | Deletion | Deleting a source immediately removes its chunks from retrieval in the simulator. |
 | Automated validation | Core, UI, routing, privacy, idempotency, upload-validation, and load tests run through `npm test`; `npm run check` also typechecks and builds every workspace. |
+| Continuous integration | A read-only, secret-free GitHub Actions workflow runs locked installation, typecheck, tests, production build, and production dependency audit on `main` and pull requests. |
 
 ### Current prototype boundaries
 
@@ -210,7 +211,7 @@ The next production increment will persist agents and sources behind resource-sc
 ### Milestone 0 — Foundation
 
 - **Available:** npm workspace, deterministic core, responsive simulator, Auth0 SPA integration, protected creator/workspace API, durable identity and workspace migrations, local reference endpoint, automated checks
-- **Next:** private signed uploads, processing state transitions, audit events, CI
+- **Next:** private signed uploads, processing state transitions, audit events
 
 ### Milestone 1 — Ingestion
 
