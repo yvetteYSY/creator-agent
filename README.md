@@ -32,6 +32,7 @@ The default simulator is intentionally deterministic and local. **It makes no AI
 | Load lab | Adjustable traffic, concurrency, and queue limits demonstrate tenant-aware capacity and graceful overload. |
 | Deletion | Deleting a source immediately removes its chunks from retrieval in the simulator. |
 | Durable storage cleanup | API deletion tombstones durable metadata before removing the object and records physical completion. A zero-AI lease-based reconciler retries tombstoned objects after transient storage failures. |
+| Immutable ingestion audit | PostgreSQL records content-free creator/system events for source authorization, upload completion/failure, scan claims/results, tombstoning, and physical storage deletion. Database triggers reject event updates and deletes. |
 | Automated validation | Core, UI, routing, privacy, idempotency, upload-validation, and load tests run through `npm test`; `npm run check` also typechecks and builds every workspace. |
 | Continuous integration | A read-only, secret-free GitHub Actions workflow runs locked installation, typecheck, tests, production build, and production dependency audit on `main` and pull requests. |
 
@@ -98,13 +99,13 @@ To connect a real user-owned agent, replace the local URL with an HTTPS endpoint
 
 - Audience authentication
 - Durable conversation persistence
-- Upload retries, resumable/multipart upload, deletion audit events, and retention-policy verification
+- Upload retries, resumable/multipart upload, audit retention/export controls, and retention-policy verification
 - Full media/container validation, duration/codec limits, malware scanning, and parser sandboxing
 - PDF, Markdown, and plain-text file extraction
 - Real audio/video transcription and timestamped transcript review
 - Embeddings, vector retrieval, model generation, and streaming responses
 - Native Expo/React Native application
-- Production authorization, audit events, rate limits, moderation, and deletion jobs
+- Broader agent/publishing audit events, rate limits, moderation, and account-deletion jobs
 - Hosting, CI/CD, monitoring, backups, and operational runbooks
 
 ## Recommended MVP iteration
@@ -218,14 +219,15 @@ The next production increment is a sandboxed media-inspection/malware worker tha
 - **Available:** npm workspace, deterministic core, responsive simulator, Auth0 SPA integration, protected creator/workspace API, durable identity and workspace migrations, local reference endpoint, automated checks
 - **Available:** private signed MP4 upload authorization and completion verification
 - **Available:** preliminary `uploaded → scanning → processing/failed` transitions with exclusive leases
-- **Next:** audit events and continuous worker scheduling
+- **Available:** immutable content-free ingestion lifecycle audit events
+- **Next:** broader agent/publishing audit coverage and continuous worker scheduling
 
 ### Milestone 1 — Ingestion
 
 - **Available:** local video staging plus configured private direct MP4 upload with exact-size/type enforcement and safe non-ready state
 - **Available:** preliminary bounded MP4 `ftyp` validation with invalid-object deletion
 - **Available:** tombstone-first object deletion with lease-based retry reconciliation
-- **Next:** full validation, malware scanning, real transcription, transcript review, upload retry, and deletion audit events
+- **Next:** full validation, malware scanning, real transcription, transcript review, upload retry, and audit retention/export controls
 
 ### Milestone 2 — Grounded chat
 

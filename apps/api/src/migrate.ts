@@ -11,6 +11,7 @@ const migrations = [
   "004_private_uploads.sql",
   "005_quarantine_scanning.sql",
   "006_storage_deletion_reconciliation.sql",
+  "007_ingestion_audit_events.sql",
 ];
 const pool = new Pool({ connectionString: databaseUrl });
 const client = await pool.connect();

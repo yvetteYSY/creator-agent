@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
+import { recordAuditEvent } from "./audit";
 
 export interface ScanJob {
   sourceId: string;
@@ -65,6 +66,13 @@ export class PostgresScanRepository implements ScanRepository {
          RETURNING id, storage_key, expected_content_type, expected_size, scan_attempts`,
         [row.id, leaseId],
       );
+      await recordAuditEvent(client, {
+        actor: { type: "system" },
+        action: "source.scan_claimed",
+        targetType: "source",
+        targetId: row.id,
+        metadata: { attempt: row.scan_attempts + 1 },
+      });
       await client.query("COMMIT");
       const job = claimed.rows[0]!;
       return {
@@ -120,24 +128,49 @@ export class PostgresScanRepository implements ScanRepository {
     },
   ) {
     const completed = result.status === "processing" || result.status === "failed";
-    const response = await this.pool.query(
-      `UPDATE sources
-       SET status = $3, visibility = $4, detected_media_type = $5, failure_code = $6,
-         scan_completed_at = CASE WHEN $7 THEN now() ELSE scan_completed_at END,
-         scan_lease_id = NULL, updated_at = now()
-       WHERE id = $1 AND scan_lease_id = $2 AND status = 'scanning' AND deleted_at IS NULL
-       RETURNING id`,
-      [
-        job.sourceId,
-        job.leaseId,
-        result.status,
-        result.visibility,
-        result.detectedMediaType,
-        result.failureCode,
-        completed,
-      ],
-    );
-    return Boolean(response.rows[0]);
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const response = await client.query(
+        `UPDATE sources
+         SET status = $3, visibility = $4, detected_media_type = $5, failure_code = $6,
+           scan_completed_at = CASE WHEN $7 THEN now() ELSE scan_completed_at END,
+           scan_lease_id = NULL, updated_at = now()
+         WHERE id = $1 AND scan_lease_id = $2 AND status = 'scanning' AND deleted_at IS NULL
+         RETURNING id`,
+        [
+          job.sourceId,
+          job.leaseId,
+          result.status,
+          result.visibility,
+          result.detectedMediaType,
+          result.failureCode,
+          completed,
+        ],
+      );
+      if (response.rows[0]) {
+        await recordAuditEvent(client, {
+          actor: { type: "system" },
+          action: result.status === "processing"
+            ? "source.scan_passed"
+            : result.status === "failed" ? "source.scan_failed" : "source.scan_released",
+          targetType: "source",
+          targetId: job.sourceId,
+          metadata: {
+            status: result.status,
+            attempt: job.attempt,
+            failureCode: result.failureCode,
+          },
+        });
+      }
+      await client.query("COMMIT");
+      return Boolean(response.rows[0]);
+    } catch (error) {
+      await rollback(client);
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 }
 

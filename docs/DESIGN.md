@@ -271,7 +271,7 @@ Each citation returned to the client contains:
 | `messages` | id, conversation_id, role, content, citations, model usage |
 | `message_requests` | idempotency_key, conversation_id, status, response_message_id, lease/expiry |
 | `evaluation_cases` | id, agent_id, question, expected sources, rubric |
-| `audit_events` | actor, action, target, metadata, timestamp |
+| `audit_events` | immutable actor class/opaque ID, action, target type/UUID, bounded content-free metadata, timestamp |
 
 Use UUIDs, explicit tenant keys, UTC timestamps, and soft deletion where immediate retrieval exclusion is required. Sensitive provider payloads should not be copied into general logs.
 
@@ -318,6 +318,7 @@ Define request and response bodies in a shared schema package and generate clien
 - Treat extracted content as untrusted to reduce prompt-injection risk.
 - Keep secrets in a managed secret store and rotate them.
 - Maintain audit events for publishing, configuration, source, and deletion changes.
+- **Implemented for ingestion:** append-only events cover upload authorization/results, scan leases/results, source tombstoning, and physical object deletion; database triggers reject mutation and tests prohibit user content/storage identifiers.
 - Provide report, unpublish, suspension, and emergency-disable paths.
 
 ### Uploaded-data protection model

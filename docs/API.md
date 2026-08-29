@@ -82,6 +82,8 @@ The identity and workspace tables store:
 
 PostgreSQL does not store access tokens, passwords, email addresses, display names, profile images, uploaded bytes, transcripts, extracted text, storage credentials, or AI-provider credentials. Uploaded bytes live only in the configured private object store. A unique `(auth_issuer, auth_subject)` constraint provides stable mapping under concurrent logins. A deleted identity is not automatically reactivated.
 
+Ingestion lifecycle changes also append immutable `audit_events` rows containing only actor class/opaque creator ID, action, source UUID, bounded state metadata, and timestamp. Filenames, titles, Auth0 subjects, storage keys, signed URLs, transcripts, and bytes are forbidden by the writer contract and regression tests. PostgreSQL triggers reject application-level `UPDATE` and `DELETE` against these events. Retention/export policy and broader agent/publishing coverage remain future work.
+
 Agent configuration history is append-only. Source rows redundantly carry the owner UUID and use a composite `(agent_id, owner_id)` foreign key, preventing a source from being attached to another creator's agent even if application code is incorrect. Migration names are recorded and pending migrations run in one transaction. Migration replay is idempotent and verified against PostgreSQL 17 in the local integration check.
 
 ## Production boundary

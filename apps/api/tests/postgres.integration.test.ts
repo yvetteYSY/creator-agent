@@ -23,6 +23,7 @@ suite("PostgreSQL creator workspace integration", () => {
       "004_private_uploads.sql",
       "005_quarantine_scanning.sql",
       "006_storage_deletion_reconciliation.sql",
+      "007_ingestion_audit_events.sql",
     ]) {
       const sql = await readFile(new URL(`../migrations/${migration}`, import.meta.url), "utf8");
       await pool!.query(sql);
@@ -162,5 +163,36 @@ suite("PostgreSQL creator workspace integration", () => {
     expect(cancelledCleanup?.sourceId).toBe(scanningSource.id);
     await expect(cleanup.complete(cancelledCleanup!)).resolves.toBe(true);
     expect(await workspace.listSources(ownerA.id, agent.id)).toEqual([]);
+
+    const audit = await pool!.query<{
+      actor_type: string;
+      actor_id: string | null;
+      action: string;
+      target_id: string;
+      metadata: unknown;
+    }>(`SELECT actor_type, actor_id, action, target_id, metadata
+        FROM audit_events ORDER BY occurred_at, id`);
+    expect(audit.rows.map((event) => event.action)).toEqual(expect.arrayContaining([
+      "source.upload_authorized",
+      "source.upload_completed",
+      "source.scan_claimed",
+      "source.scan_passed",
+      "source.deleted",
+      "source.storage_deletion_claimed",
+      "source.storage_deletion_completed",
+    ]));
+    expect(audit.rows.some((event) => event.actor_type === "creator" && event.actor_id === ownerA.id))
+      .toBe(true);
+    expect(audit.rows.some((event) => event.actor_type === "system" && event.actor_id === null))
+      .toBe(true);
+    const serializedAudit = JSON.stringify(audit.rows);
+    expect(serializedAudit).not.toContain("Integration video");
+    expect(serializedAudit).not.toContain("delete-during-scan");
+    expect(serializedAudit).not.toContain("private-uploads/");
+    expect(serializedAudit).not.toContain("auth0|postgres-a");
+    await expect(pool!.query("UPDATE audit_events SET action = 'tampered'"))
+      .rejects.toThrowError(/immutable/i);
+    await expect(pool!.query("DELETE FROM audit_events"))
+      .rejects.toThrowError(/immutable/i);
   });
 });

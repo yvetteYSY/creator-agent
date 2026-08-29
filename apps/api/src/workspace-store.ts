@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
+import { recordAuditEvent } from "./audit";
 
 export type AgentStatus = "draft" | "published" | "unpublished";
 export type SourceType = "document" | "audio" | "video";
@@ -339,25 +340,43 @@ export class PostgresWorkspaceRepository implements WorkspaceRepository {
   }
 
   async createSource(ownerId: string, agentId: string, input: CreateSourceInput) {
-    const result = await this.pool.query<SourceRow>(
-      `INSERT INTO sources (
-         id, owner_id, agent_id, title, type,
-         storage_key, expected_content_type, expected_size, upload_expires_at
-       )
-       SELECT $1, $2, a.id, $4, $5, $6, $7, $8, $9
-       FROM agents a
-       WHERE a.owner_id = $2 AND a.id = $3 AND a.deleted_at IS NULL
-       RETURNING id, owner_id, agent_id, title, type, status, visibility, created_at, updated_at`,
-      [
-        randomUUID(), ownerId, agentId, input.title, input.type,
-        input.upload?.storageKey ?? null,
-        input.upload?.contentType ?? null,
-        input.upload?.size ?? null,
-        input.upload?.expiresAt ?? null,
-      ],
-    );
-    if (!result.rows[0]) throw new WorkspaceRecordNotFoundError("Agent not found.");
-    return mapSource(result.rows[0]);
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const result = await client.query<SourceRow>(
+        `INSERT INTO sources (
+           id, owner_id, agent_id, title, type,
+           storage_key, expected_content_type, expected_size, upload_expires_at
+         )
+         SELECT $1, $2, a.id, $4, $5, $6, $7, $8, $9
+         FROM agents a
+         WHERE a.owner_id = $2 AND a.id = $3 AND a.deleted_at IS NULL
+         RETURNING id, owner_id, agent_id, title, type, status, visibility, created_at, updated_at`,
+        [
+          randomUUID(), ownerId, agentId, input.title, input.type,
+          input.upload?.storageKey ?? null,
+          input.upload?.contentType ?? null,
+          input.upload?.size ?? null,
+          input.upload?.expiresAt ?? null,
+        ],
+      );
+      const row = result.rows[0];
+      if (!row) throw new WorkspaceRecordNotFoundError("Agent not found.");
+      await recordAuditEvent(client, {
+        actor: { type: "creator", id: ownerId },
+        action: input.upload ? "source.upload_authorized" : "source.created",
+        targetType: "source",
+        targetId: row.id,
+        metadata: { type: input.type, status: row.status, visibility: row.visibility },
+      });
+      await client.query("COMMIT");
+      return mapSource(row);
+    } catch (error) {
+      await rollback(client);
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async updateSourceVisibility(
@@ -448,14 +467,34 @@ export class PostgresWorkspaceRepository implements WorkspaceRepository {
     visibility: SourceVisibility,
     expectedStatus: SourceStatus,
   ) {
-    const result = await this.pool.query<SourceRow>(
-      `UPDATE sources
-       SET status = $4, visibility = $5, updated_at = now()
-       WHERE owner_id = $1 AND agent_id = $2 AND id = $3 AND status = $6 AND deleted_at IS NULL
-       RETURNING id, owner_id, agent_id, title, type, status, visibility, created_at, updated_at`,
-      [ownerId, agentId, sourceId, status, visibility, expectedStatus],
-    );
-    return result.rows[0] ? mapSource(result.rows[0]) : null;
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const result = await client.query<SourceRow>(
+        `UPDATE sources
+         SET status = $4, visibility = $5, updated_at = now()
+         WHERE owner_id = $1 AND agent_id = $2 AND id = $3 AND status = $6 AND deleted_at IS NULL
+         RETURNING id, owner_id, agent_id, title, type, status, visibility, created_at, updated_at`,
+        [ownerId, agentId, sourceId, status, visibility, expectedStatus],
+      );
+      const row = result.rows[0];
+      if (row) {
+        await recordAuditEvent(client, {
+          actor: { type: "creator", id: ownerId },
+          action: status === "uploaded" ? "source.upload_completed" : "source.upload_failed",
+          targetType: "source",
+          targetId: sourceId,
+          metadata: { status, visibility },
+        });
+      }
+      await client.query("COMMIT");
+      return row ? mapSource(row) : null;
+    } catch (error) {
+      await rollback(client);
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   private async findSource(ownerId: string, agentId: string, sourceId: string) {
@@ -470,29 +509,63 @@ export class PostgresWorkspaceRepository implements WorkspaceRepository {
   }
 
   async deleteSource(ownerId: string, agentId: string, sourceId: string) {
-    const result = await this.pool.query<{ storage_key: string | null }>(
-      `UPDATE sources
-       SET status = 'deleting', visibility = 'disabled', deleted_at = now(),
-         scan_lease_id = NULL, updated_at = now()
-       WHERE owner_id = $1 AND agent_id = $2 AND id = $3 AND deleted_at IS NULL
-       RETURNING storage_key`,
-      [ownerId, agentId, sourceId],
-    );
-    if (!result.rows[0]) throw new WorkspaceRecordNotFoundError("Source not found.");
-    return result.rows[0].storage_key ? { storageKey: result.rows[0].storage_key } : {};
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const result = await client.query<{ storage_key: string | null }>(
+        `UPDATE sources
+         SET status = 'deleting', visibility = 'disabled', deleted_at = now(),
+           scan_lease_id = NULL, updated_at = now()
+         WHERE owner_id = $1 AND agent_id = $2 AND id = $3 AND deleted_at IS NULL
+         RETURNING storage_key`,
+        [ownerId, agentId, sourceId],
+      );
+      const row = result.rows[0];
+      if (!row) throw new WorkspaceRecordNotFoundError("Source not found.");
+      await recordAuditEvent(client, {
+        actor: { type: "creator", id: ownerId },
+        action: "source.deleted",
+        targetType: "source",
+        targetId: sourceId,
+        metadata: { status: "deleting", visibility: "disabled", hasStoredObject: Boolean(row.storage_key) },
+      });
+      await client.query("COMMIT");
+      return row.storage_key ? { storageKey: row.storage_key } : {};
+    } catch (error) {
+      await rollback(client);
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async markSourceStorageDeleted(ownerId: string, agentId: string, sourceId: string) {
-    const result = await this.pool.query(
-      `UPDATE sources
-       SET storage_deleted_at = now(), deletion_lease_id = NULL,
-         deletion_failure_code = NULL, updated_at = now()
-       WHERE owner_id = $1 AND agent_id = $2 AND id = $3
-         AND deleted_at IS NOT NULL AND storage_key IS NOT NULL
-       RETURNING id`,
-      [ownerId, agentId, sourceId],
-    );
-    if (!result.rows[0]) throw new WorkspaceRecordNotFoundError("Deleted source not found.");
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const result = await client.query(
+        `UPDATE sources
+         SET storage_deleted_at = now(), deletion_lease_id = NULL,
+           deletion_failure_code = NULL, updated_at = now()
+         WHERE owner_id = $1 AND agent_id = $2 AND id = $3
+           AND deleted_at IS NOT NULL AND storage_key IS NOT NULL
+         RETURNING id`,
+        [ownerId, agentId, sourceId],
+      );
+      if (!result.rows[0]) throw new WorkspaceRecordNotFoundError("Deleted source not found.");
+      await recordAuditEvent(client, {
+        actor: { type: "system" },
+        action: "source.storage_deleted",
+        targetType: "source",
+        targetId: sourceId,
+      });
+      await client.query("COMMIT");
+    } catch (error) {
+      await rollback(client);
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 }
 
