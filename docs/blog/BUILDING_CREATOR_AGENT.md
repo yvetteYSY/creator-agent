@@ -1,16 +1,16 @@
-# Building Creator Agent: A Privacy-First, Zero-Cost Path from Idea to Tested MVP
+# Turn Your Content Into an AI Agent—Without Giving Up Control
 
-*How we designed a mobile-first agent builder that learns from creator content, protects private uploads, supports many audience members, and never silently spends the developer's AI tokens.*
+*What if your audience could ask your best work a question and get a cited answer in your voice? Here is how we built a privacy-first Creator Agent MVP without burning a developer AI key.*
 
-[![Watch the narrated Creator Agent end-to-end prototype](https://raw.githubusercontent.com/yvetteYSY/creator-agent/main/docs/assets/creator-agent-e2e-poster.jpg)](https://github.com/yvetteYSY/creator-agent/blob/main/docs/assets/creator-agent-e2e-demo.mp4)
+[![Abstract streams of documents, audio, and video converging into one agent and branching to an audience](https://raw.githubusercontent.com/yvetteYSY/creator-agent/main/docs/assets/creator-agent-cover-abstract.png)](https://github.com/yvetteYSY/creator-agent/blob/main/docs/assets/creator-agent-e2e-demo.mp4)
 
 *▶ [Watch the narrated, captioned 33-second demo video](https://github.com/yvetteYSY/creator-agent/blob/main/docs/assets/creator-agent-e2e-demo.mp4) or [read its transcript](https://github.com/yvetteYSY/creator-agent/blob/main/docs/assets/creator-agent-e2e-transcript.vtt).*
 
-Creators already have the raw material for a useful AI agent: articles, guides, videos, transcripts, courses, and a recognizable way of explaining things. What they often do not have is a safe, understandable way to turn that library into an agent their audience can use.
+Imagine someone discovering your work at midnight. They do not want to search through hours of video or dozens of posts. They want to ask one question—and get an answer grounded in something you actually published, delivered in a style that still feels like you.
 
-That was the starting point for **Creator Agent**. The product idea is straightforward: a creator adds content, reviews what the system learned, customizes how the agent communicates, and publishes a mobile experience that answers audience questions using approved knowledge.
+That is the experience we set out to build with **Creator Agent**: add the content you already have, review what the system learned, shape the agent's voice and boundaries, and publish a mobile experience your audience can trust.
 
-The constraints made the work interesting:
+The exciting part is the conversational experience. The important part is everything underneath it:
 
 - Uploaded content must remain private unless the creator explicitly approves it.
 - Multiple audience members must be able to chat without seeing one another's conversations.
@@ -18,19 +18,19 @@ The constraints made the work interesting:
 - The prototype must not silently route requests through the developer's personal AI account or create token charges.
 - The architecture should show a credible path to production without pretending the prototype is already production-ready.
 
-We turned those constraints into a test-first, mobile-responsive MVP and an executable system design.
+Those promises became a test-first, mobile-responsive MVP—and a system design honest enough to show what works today and what still belongs on the road to production.
 
-## Prototype preview
+## See it in action
 
 ![Creator Agent audience preview showing a grounded answer with source citations](https://raw.githubusercontent.com/yvetteYSY/creator-agent/main/docs/assets/creator-agent-audience-preview.jpg)
 
 *The mobile audience preview answering from explicitly approved creator knowledge. Each answer links back to the excerpts that support it, while the banner makes the zero-cost deterministic mode visible.*
 
-## What we built
+## From content library to audience-ready agent
 
-The current Creator Agent repository contains a responsive web simulator, a protected API, durable workspace foundations, background ingestion boundaries, and a deterministic reference agent. Together, they demonstrate the main product journey without requiring a paid AI provider.
+What emerged is more than a clickable mockup. The repository combines a responsive simulator, protected API, durable workspace foundation, background ingestion boundaries, and deterministic reference agent. Together, they let the full product journey run without a paid AI provider.
 
-### A creator studio built around explicit control
+### Start with the content you already have
 
 The studio lets a creator add source material, inspect its status, decide whether it can be used in public answers, and remove it. Sources start private and preview-only. Public retrieval includes only sources that are ready and explicitly approved.
 
@@ -38,15 +38,15 @@ The studio lets a creator add source material, inspect its status, decide whethe
 
 *The creator studio keeps source status and publication scope visible. Ready content can still remain preview-only.*
 
-This sounds like a small interface choice, but it establishes an important rule: uploading content and publishing knowledge are separate actions. A creator can experiment without accidentally exposing unfinished, sensitive, or incorrectly processed material.
+This one interface choice carries a major promise: uploading content and publishing knowledge are separate actions. A creator can experiment freely without accidentally exposing unfinished, sensitive, or incorrectly processed material.
 
 ![Creator Agent add-source form with preview-only selected by default](https://raw.githubusercontent.com/yvetteYSY/creator-agent/main/docs/assets/creator-agent-add-source.jpg)
 
 *New material begins preview-only, and the local simulator states clearly that pasted content remains in the browser.*
 
-### Grounded answers with visible citations
+### Give your audience answers they can trust
 
-The audience preview uses deterministic local retrieval. It searches approved excerpts, produces an answer from those excerpts, and links the answer back to its sources. When the available material is insufficient, it abstains instead of inventing an answer.
+For an audience member, a fluent answer is useful; a fluent answer with evidence is trustworthy. The preview searches approved excerpts, answers from them, and links every response back to its sources. When the material is not enough, it says so instead of making something up.
 
 The deterministic engine is intentionally simple. It is not meant to compete with a production language model. Its job is to make the product contract observable and testable:
 
@@ -57,9 +57,9 @@ The deterministic engine is intentionally simple. It is not meant to compete wit
 
 Because the output is repeatable, the simulator also acts as a regression oracle for future embedding and generation providers.
 
-### Knowledge and voice are separate controls
+### Make it sound like you—without weakening the facts
 
-A creator's agent should reflect both what the creator knows and how the creator communicates. We modeled these as separate layers.
+A creator's agent should capture both what the creator knows and how the creator communicates. The safest way to do that is to keep those concerns separate.
 
 The knowledge layer controls approved sources and citations. The style layer controls voice presets, response depth, signature phrases, greetings, prohibited topics, and behavioral boundaries. Configuration is versioned so changes can be persisted and audited instead of mutating an opaque prompt.
 
@@ -69,9 +69,9 @@ This separation matters. Tone should never override grounding, and a source shou
 
 *Structured controls make response depth, signature language, prohibited topics, and behavioral boundaries independently reviewable.*
 
-### Bring Your Own Agent without a hidden fallback
+### Choose the engine. Keep control of the bill.
 
-One of the earliest product decisions was that the prototype would not consume a developer-owned AI key. Creator Agent therefore supports two explicit routes:
+One decision was non-negotiable: the prototype would never quietly consume a developer-owned AI key. Creator Agent therefore offers two explicit routes:
 
 - A deterministic local reference agent that reports zero AI calls.
 - A user-owned HTTPS endpoint that implements a documented request and response contract.
@@ -84,7 +84,7 @@ That clarity is useful beyond cost control. It makes data movement visible and g
 
 *Routing is an explicit creator choice: deterministic local execution or a user-owned endpoint with a visible processing boundary.*
 
-### Managed authentication and durable tenant boundaries
+### Secure from the first sign-in
 
 The managed path uses OIDC Authorization Code with PKCE through Auth0. The protected API validates token signature, issuer, audience, expiration, algorithm, subject, and permission before mapping the external identity to an opaque internal creator ID.
 
@@ -92,9 +92,9 @@ PostgreSQL stores creator identity mappings, agents, versioned configurations, s
 
 PostgreSQL was selected because the difficult early data is relational: ownership, versions, state transitions, idempotency, leases, deletion, and auditability. Video bytes do not belong in the database; they go to private object storage. PostgreSQL provides the transactional control plane around those objects and leaves a practical path to `pgvector` later.
 
-### A private video-ingestion boundary
+### Treat every upload like it matters
 
-Video is not treated as “just another file upload.” The managed flow separates several security-sensitive stages:
+Video is where simple demos often hide the hardest risks. Creator Agent refuses to treat it as “just another file upload.” The managed flow separates each security-sensitive stage:
 
 1. The API authorizes an exact file key, type, size, and short upload window.
 2. The browser uploads the MP4 directly to private S3-compatible storage without receiving storage credentials or forwarding its Auth0 token.
@@ -106,9 +106,9 @@ Video is not treated as “just another file upload.” The managed flow separat
 
 For the zero-cost local path, a creator can pair a video with a WebVTT sidecar. Timestamped chunks are built in the browser without uploading the media or calling a transcription model.
 
-Automatic transcription is deliberately not simulated as completed. A durable video without captions remains “Awaiting transcription.” Honest state is more valuable than a polished progress indicator that overstates what the system has done.
+Automatic transcription is deliberately not simulated as completed. A durable video without captions remains “Awaiting transcription.” That honesty is a feature: a truthful state is more valuable than a polished progress indicator that overstates what the system has done.
 
-### Multi-user behavior before production traffic
+### Build for an audience, not just a demo
 
 Audience conversations are isolated in the simulator: Maya, Theo, and Jules each have separate histories. The load lab then makes concurrency visible through adjustable audience traffic, popular-agent concentration, platform capacity, per-agent concurrency, and bounded queue size.
 
@@ -120,9 +120,9 @@ This is not a substitute for production load testing, but it turns concurrency f
 
 *The load lab exposes traffic concentration, platform capacity, bounded queues, and per-agent fairness as product behavior.*
 
-## The architecture in one view
+## Under the hood: clear boundaries, clear ownership
 
-The system separates identity, metadata, media, processing, retrieval, and generation:
+Underneath the inviting interface, the system keeps identity, metadata, media, processing, retrieval, and generation deliberately separate:
 
 ```text
 Mobile-first client
@@ -139,15 +139,15 @@ Quarantine worker
 
 The important boundary is not a particular vendor. It is that identity is verified once, ownership is applied to every durable operation, raw media stays private, public retrieval uses only approved material, and generation routing is explicit.
 
-## How we validated it
+## We tested the promises, not just the happy path
 
-The project was built in small increments, with each increment checked before it reached `main`. The repository now validates authentication, authorization, tenant isolation, source privacy, retrieval, citations, deletion, upload constraints, worker idempotency, malware-scan behavior, routing, conversation isolation, and load shedding.
+A polished demo is easy to applaud. A dependable product needs proof. We built in small increments and checked every one before it reached `main`. The repository now validates authentication, authorization, tenant isolation, source privacy, retrieval, citations, deletion, upload constraints, worker idempotency, malware-scan behavior, routing, conversation isolation, and load shedding.
 
 The standard local check currently passes **84 tests**, along with TypeScript validation and production builds for every workspace. Two infrastructure-dependent integration suites remain opt-in because they require external services. A secret-free GitHub Actions workflow runs locked installation, typechecking, tests, builds, and a production dependency audit.
 
 We also recorded a narrated and captioned [33-second end-to-end prototype](https://github.com/yvetteYSY/creator-agent/blob/main/docs/assets/creator-agent-e2e-demo.mp4). The simulated product flow is deterministic and does not use a developer AI key.
 
-## Key lessons
+## What surprised us—and what we learned
 
 - **A useful prototype should encode invariants, not imitate magic.** The local retrieval engine is intentionally modest, but it proves the rules that must survive a future model integration. A prototype becomes more valuable when it can catch privacy and product regressions instead of merely producing an impressive response once.
 
@@ -167,13 +167,13 @@ We also recorded a narrated and captioned [33-second end-to-end prototype](https
 
 Calling those gaps out is not a weakness. It makes the next milestones measurable.
 
-## What comes next
+## Where Creator Agent goes next
 
 The best next vertical slice is to connect approved durable transcript cues to tenant-filtered retrieval. That preserves the current privacy contract while replacing browser-only knowledge with durable, timestamped evidence. From there, the team can add provider-neutral embeddings and generation, evaluate answerability and citation quality, and build the Expo/React Native shell against the same authenticated API.
 
-Creator Agent began as a question—can any content creator build an agent from their own documents and video? The MVP shows that the answer is yes, but the real product is not simply a chatbot. It is a controlled publishing system for knowledge, voice, privacy, routing, and audience access.
+Your content has already earned trust. The opportunity is to make that knowledge conversational without surrendering control of the source, the voice, the audience, or the bill.
 
-That is the foundation worth carrying into production.
+Creator Agent began with a simple question: can any creator build an agent from their own documents and video? The MVP shows that the answer is yes—but the product worth carrying into production is not merely a chatbot. It is a creator-owned publishing system for knowledge, voice, privacy, routing, and audience access.
 
 ---
 
