@@ -59,6 +59,8 @@ suite("S3-compatible object storage integration", () => {
       });
       const prefix = await storage.readObjectPrefix(key, 64);
       expect(prefix).toEqual(bytes);
+      const middle = await storage.readObjectRange(key, 8, 4);
+      expect(middle).toEqual(bytes.slice(8, 12));
       expect(validateMp4Prefix(prefix)).toEqual({ valid: true });
       await storage.deleteObject(key);
       await expect(storage.inspectObject(key)).rejects.toThrowError(/not found/i);

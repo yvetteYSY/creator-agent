@@ -20,7 +20,7 @@ The default simulator is intentionally deterministic and local. **It makes no AI
 | Creator studio | A seeded creator can manage an agent and its knowledge sources in a responsive web interface. |
 | Text ingestion | Document or audio-transcript text can be pasted, chunked, and indexed in browser memory. Local video can also use a creator-provided WebVTT sidecar to create timestamped chunks without an AI call. |
 | Private MP4 upload | In managed Auth0 mode, an MP4 up to 250 MB uploads directly to private S3-compatible storage through a 10-minute, exact-key/type/size policy. The Auth0 token is sent only to the API, never to storage. Local mode still stages the file without a network request. |
-| Quarantine scan boundary | A zero-AI one-shot worker safely claims uploaded sources with PostgreSQL leases, reads at most 4 KB, checks the ISO BMFF `ftyp` box/brand, and moves valid files to **Awaiting transcription** or deletes/disables invalid signatures. |
+| Quarantine scan boundary | A zero-AI one-shot worker safely claims uploaded sources with PostgreSQL leases and reads at most two 512 KB ranges. It validates the MP4 brand, movie metadata, 1-second-to-4-hour duration, H.264 video, and AAC audio before persisting detected metadata and moving the source to **Awaiting transcription**. Invalid files are deleted and disabled. |
 | Honest video status | A video without captions remains **Awaiting transcription**, and a durable upload stops at **Uploaded**. In local mode only, a valid creator-provided WebVTT sidecar makes timestamped caption chunks ready for preview or explicit public approval. |
 | Source privacy | Sources are preview-only by default and require explicit approval for public answers. Processing, disabled, preview-only, and deleted sources are excluded from public retrieval. |
 | Grounded chat | A deterministic local retrieval engine answers from approved text and returns source citations or says that it lacks enough information. |
@@ -41,7 +41,7 @@ The default simulator is intentionally deterministic and local. **It makes no AI
 - Default local-simulator state is held in memory and resets on refresh; configured Auth0 mode persists the creator workspace through the API.
 - The interface is a mobile-responsive web simulator, not yet an Expo/React Native app.
 - The protected API persists creator identity, agents, versioned configuration, source privacy metadata, and private-upload lifecycle metadata. Auth0 mode can upload MP4 bytes when S3-compatible storage is explicitly configured; local mode and pasted text remain browser-only.
-- Uploaded video is not automatically scanned. The opt-in one-shot worker performs only a preliminary bounded MP4 signature check; full container parsing, duration/codec validation, malware scanning, decoding, automatic transcription, and embedding are not implemented. A local video becomes available to deterministic retrieval only when its creator supplies a valid WebVTT sidecar; that transcript is not yet persisted in managed mode.
+- Uploaded video is not automatically scanned. The opt-in one-shot worker performs bounded MP4 brand/movie-header/track inspection and enforces duration plus H.264/AAC limits, but malware scanning, checksum verification, sandboxed decoding, automatic transcription, and embedding are not implemented. A local video becomes available to deterministic retrieval only when its creator supplies a valid WebVTT sidecar; that transcript is not yet persisted in managed mode.
 - Pasted text uses deterministic term matching rather than model-based embeddings or generation.
 - A real user-owned endpoint may create costs for its owner; Creator Agent never silently uses a platform or developer AI key.
 
@@ -57,6 +57,8 @@ npm run dev
 Open `http://127.0.0.1:4173`.
 
 Development defaults to an explicit local session. To exercise managed OIDC, configure an Auth0 Single Page Application, custom API, and PostgreSQL identity store using the [authentication setup guide](docs/AUTHENTICATION.md) and [API guide](docs/API.md). Production builds reject local authentication and fail closed when Auth0 or API configuration is missing.
+
+The staged path from this MVP to a secure closed beta and public service is tracked in the [production readiness roadmap](docs/PRODUCTION_ROADMAP.md). Development and CI remain deterministic and free of paid AI calls.
 
 Useful checks:
 
@@ -100,7 +102,7 @@ To connect a real user-owned agent, replace the local URL with an HTTPS endpoint
 - Audience authentication
 - Durable conversation persistence
 - Upload retries, resumable/multipart upload, audit retention/export controls, and retention-policy verification
-- Full media/container validation, duration/codec limits, malware scanning, and parser sandboxing
+- Full sample-table/media decoding validation, checksum verification, malware scanning, and parser sandboxing
 - PDF, Markdown, and plain-text file extraction
 - Automatic audio/video transcription and durable transcript review/persistence
 - Embeddings, vector retrieval, model generation, and streaming responses
@@ -125,7 +127,7 @@ Keep the current deterministic simulator as a zero-cost product demo and regress
 
 1. **Available:** issue a 10-minute signed POST policy for one allowlisted format, starting with MP4.
 2. **Available:** upload directly to private object storage without proxying large video bytes or forwarding the Auth0 token.
-3. **Partially available:** pin declared MIME type and exact byte size, verify stored metadata, then read at most 4 KB to check a supported ISO BMFF `ftyp` signature. Full parsing, duration limits, and malware scanning remain next.
+3. **Partially available:** pin declared MIME type and exact byte size, verify stored metadata, then read at most two 512 KB ranges to inspect a supported ISO BMFF brand, movie duration, H.264 video track, and AAC audio track. Full decoding, checksum verification, and malware scanning remain next.
 4. **Partially available:** lease-based, concurrency-safe one-shot worker with `uploaded → scanning → processing/failed`; continuous scheduling and `transcribing → ready` remain next.
 5. **Available in local simulation:** accept a creator-provided WebVTT sidecar and build timestamped deterministic chunks without an AI call. Next, route automatic transcription to either a self-hosted worker or a creator-owned endpoint and record the selected processor and usage without logging content.
 6. Let the creator review the timestamped transcript before approving it for public answers.
@@ -206,12 +208,13 @@ creator-agent/
 │   ├── CUSTOMIZATION.md # Knowledge/style separation and evaluation
 │   ├── LOCAL_VIDEO_TRANSCRIPTS.md # Zero-cost WebVTT sidecar workflow
 │   ├── PRIVATE_UPLOADS.md # Signed MP4 upload and data-protection boundary
+│   ├── PRODUCTION_ROADMAP.md # Closed-beta and public-launch execution plan
 │   └── DESIGN.md        # Product, architecture, privacy, and scale design
 ├── package.json         # npm workspace scripts
 └── README.md
 ```
 
-The next production increment is a sandboxed media-inspection/malware worker that fully parses the MP4 container and validates duration/codecs before any transcription route can see the upload. The actual mobile and transcription-worker packages still wait on provider, hosting, privacy, and beta-cohort decisions. The deterministic core remains useful for product demos and fast policy regression tests.
+The next production increment is a sandboxed malware/checksum adapter around the bounded media-inspection worker before any transcription route can see the upload. The actual mobile and transcription-worker packages still wait on provider, hosting, privacy, and beta-cohort decisions. The deterministic core remains useful for product demos and fast policy regression tests.
 
 ## Delivery milestones
 
@@ -219,16 +222,16 @@ The next production increment is a sandboxed media-inspection/malware worker tha
 
 - **Available:** npm workspace, deterministic core, responsive simulator, Auth0 SPA integration, protected creator/workspace API, durable identity and workspace migrations, local reference endpoint, automated checks
 - **Available:** private signed MP4 upload authorization and completion verification
-- **Available:** preliminary `uploaded → scanning → processing/failed` transitions with exclusive leases
+- **Available:** bounded metadata-aware `uploaded → scanning → processing/failed` transitions with exclusive leases
 - **Available:** immutable content-free ingestion lifecycle audit events
 - **Next:** broader agent/publishing audit coverage and continuous worker scheduling
 
 ### Milestone 1 — Ingestion
 
 - **Available:** local video staging plus configured private direct MP4 upload with exact-size/type enforcement and safe non-ready state
-- **Available:** preliminary bounded MP4 `ftyp` validation with invalid-object deletion
+- **Available:** bounded MP4 brand, duration, H.264/AAC track validation with detected metadata persistence and invalid-object deletion
 - **Available:** tombstone-first object deletion with lease-based retry reconciliation
-- **Next:** full validation, malware scanning, real transcription, transcript review, upload retry, and audit retention/export controls
+- **Next:** sandboxed decoding/checksum and malware scanning, real transcription, transcript review, upload retry, and audit retention/export controls
 
 ### Milestone 2 — Grounded chat
 

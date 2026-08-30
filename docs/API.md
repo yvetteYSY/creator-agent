@@ -78,7 +78,7 @@ The identity and workspace tables store:
 - Creation and last-seen timestamps
 - A deletion timestamp when access is revoked
 - Agent name, description, draft/publication state, and immutable configuration versions
-- Source title, media type, processing status, private/public/disabled visibility, opaque storage key, expected content type/size, upload-policy expiry, preliminary scan state, and storage-deletion completion/lease/attempt state
+- Source title, media type, processing status, private/public/disabled visibility, opaque storage key, expected content type/size, upload-policy expiry, bounded scan state, detected duration/video/audio codecs, and storage-deletion completion/lease/attempt state
 
 PostgreSQL does not store access tokens, passwords, email addresses, display names, profile images, uploaded bytes, transcripts, extracted text, storage credentials, or AI-provider credentials. Uploaded bytes live only in the configured private object store. A unique `(auth_issuer, auth_subject)` constraint provides stable mapping under concurrent logins. A deleted identity is not automatically reactivated.
 

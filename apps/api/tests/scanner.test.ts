@@ -1,20 +1,22 @@
 import { describe, expect, it } from "vitest";
 import type { ObjectStorage, StoredObjectMetadata, UploadPolicy } from "../src/object-storage";
-import { runScanOnce, validateMp4Prefix } from "../src/scanner";
-import type { ScanJob, ScanRepository } from "../src/scanner-store";
+import { inspectMp4, runScanOnce, validateMp4Prefix } from "../src/scanner";
+import type { DetectedMediaMetadata, ScanJob, ScanRepository } from "../src/scanner-store";
+
+const VALID_MP4 = mp4File();
 
 const JOB: ScanJob = {
   sourceId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
   storageKey: "private-uploads/opaque",
   expectedContentType: "video/mp4",
-  expectedSize: 20,
+  expectedSize: VALID_MP4.byteLength,
   leaseId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
   attempt: 1,
 };
 
 class MemoryScanRepository implements ScanRepository {
   job: ScanJob | null = JOB;
-  completed?: string;
+  completed?: DetectedMediaMetadata;
   failed?: string;
   released?: string;
 
@@ -24,8 +26,8 @@ class MemoryScanRepository implements ScanRepository {
     return job;
   }
 
-  async complete(_job: ScanJob, detectedMediaType: string) {
-    this.completed = detectedMediaType;
+  async complete(_job: ScanJob, media: DetectedMediaMetadata) {
+    this.completed = media;
     return true;
   }
 
@@ -42,8 +44,9 @@ class MemoryScanRepository implements ScanRepository {
 
 class MemoryScanStorage implements ObjectStorage {
   readonly isAvailable = true;
-  prefix = mp4Prefix();
+  bytes = VALID_MP4;
   readLimit?: number;
+  ranges: Array<{ offset: number; maximumBytes: number }> = [];
   deleted: string[] = [];
   readError?: Error;
 
@@ -58,7 +61,13 @@ class MemoryScanStorage implements ObjectStorage {
   async readObjectPrefix(_key: string, maximumBytes: number) {
     this.readLimit = maximumBytes;
     if (this.readError) throw this.readError;
-    return this.prefix;
+    return this.bytes.slice(0, maximumBytes);
+  }
+
+  async readObjectRange(_key: string, offset: number, maximumBytes: number) {
+    this.ranges.push({ offset, maximumBytes });
+    if (this.readError) throw this.readError;
+    return this.bytes.slice(offset, offset + maximumBytes);
   }
 
   async deleteObject(key: string) {
@@ -67,24 +76,33 @@ class MemoryScanStorage implements ObjectStorage {
 }
 
 describe("quarantine MP4 scanner", () => {
-  it("accepts a bounded ISO BMFF MP4 signature and advances only to processing", async () => {
+  it("accepts bounded MP4 metadata with H.264 video and AAC audio", async () => {
     const repository = new MemoryScanRepository();
     const storage = new MemoryScanStorage();
     await expect(runScanOnce({ repository, storage })).resolves.toEqual({
       outcome: "passed",
       sourceId: JOB.sourceId,
       detectedMediaType: "video/mp4",
+      durationMs: 182_200,
+      videoCodec: "avc1",
+      audioCodec: "mp4a",
     });
-    expect(storage.readLimit).toBe(4096);
+    expect(storage.ranges).toEqual([{ offset: 0, maximumBytes: VALID_MP4.byteLength }]);
     expect(storage.deleted).toEqual([]);
-    expect(repository.completed).toBe("video/mp4");
+    expect(repository.completed).toEqual({
+      mediaType: "video/mp4",
+      durationMs: 182_200,
+      videoCodec: "avc1",
+      audioCodec: "mp4a",
+    });
     expect(repository.failed).toBeUndefined();
   });
 
   it("deletes and disables a file whose prefix is not MP4", async () => {
     const repository = new MemoryScanRepository();
     const storage = new MemoryScanStorage();
-    storage.prefix = new Uint8Array(24);
+    storage.bytes = new Uint8Array(24);
+    repository.job = { ...JOB, expectedSize: storage.bytes.byteLength };
     await expect(runScanOnce({ repository, storage })).resolves.toMatchObject({
       outcome: "failed",
       failureCode: "invalid_mp4_box",
@@ -126,6 +144,59 @@ describe("quarantine MP4 scanner", () => {
     expect(validateMp4Prefix(mp4Prefix("zzzz", "isom"))).toEqual({ valid: true });
   });
 
+  it("reads a bounded tail window when the moov box follows a large media payload", async () => {
+    const bytes = mp4File({ mediaPayloadBytes: 600_000 });
+    const repository = new MemoryScanRepository();
+    repository.job = { ...JOB, expectedSize: bytes.byteLength };
+    const storage = new MemoryScanStorage();
+    storage.bytes = bytes;
+
+    await expect(runScanOnce({ repository, storage })).resolves.toMatchObject({
+      outcome: "passed",
+      durationMs: 182_200,
+    });
+    expect(storage.ranges).toHaveLength(2);
+    expect(storage.ranges[0]).toEqual({ offset: 0, maximumBytes: 524_288 });
+    expect(storage.ranges[1]?.offset).toBe(bytes.byteLength - 524_288);
+  });
+
+  it("rejects missing audio, unsupported codecs, and unreasonable duration", () => {
+    expect(inspectMp4(mp4File({ includeAudio: false }), new Uint8Array(), 0)).toMatchObject({
+      valid: false,
+      failureCode: "missing_audio_track",
+    });
+    expect(inspectMp4(mp4File({ videoCodec: "vp09" }), new Uint8Array(), 0)).toMatchObject({
+      valid: false,
+      failureCode: "unsupported_video_codec",
+    });
+    expect(inspectMp4(mp4File({ audioCodec: "Opus" }), new Uint8Array(), 0)).toMatchObject({
+      valid: false,
+      failureCode: "unsupported_audio_codec",
+    });
+    expect(inspectMp4(mp4File({ durationMs: 14_400_001 }), new Uint8Array(), 0)).toMatchObject({
+      valid: false,
+      failureCode: "media_duration_out_of_range",
+    });
+  });
+
+  it("rejects files without complete movie metadata", () => {
+    const bytes = concatBytes(mp4Prefix(), box("mdat", new Uint8Array(32)));
+    expect(inspectMp4(bytes, new Uint8Array(), bytes.byteLength)).toEqual({
+      valid: false,
+      failureCode: "mp4_metadata_not_found",
+    });
+  });
+
+  it("does not mistake movie-like bytes inside media payloads for a top-level moov box", () => {
+    const valid = mp4File();
+    const embeddedMoov = findBoxBytes(valid, "moov");
+    const bytes = concatBytes(mp4Prefix(), box("mdat", embeddedMoov));
+    expect(inspectMp4(bytes, new Uint8Array(), bytes.byteLength)).toEqual({
+      valid: false,
+      failureCode: "mp4_metadata_not_found",
+    });
+  });
+
   it("does nothing when no uploaded source is available", async () => {
     const repository = new MemoryScanRepository();
     repository.job = null;
@@ -146,4 +217,68 @@ function mp4Prefix(majorBrand = "isom", compatibleBrand = "mp42") {
 
 function writeAscii(bytes: Uint8Array, offset: number, value: string) {
   for (let index = 0; index < value.length; index += 1) bytes[offset + index] = value.charCodeAt(index);
+}
+
+function mp4File(options: {
+  durationMs?: number;
+  videoCodec?: string;
+  audioCodec?: string;
+  includeAudio?: boolean;
+  mediaPayloadBytes?: number;
+} = {}) {
+  const durationMs = options.durationMs ?? 182_200;
+  const video = track("vide", options.videoCodec ?? "avc1");
+  const audio = options.includeAudio === false ? new Uint8Array() : track("soun", options.audioCodec ?? "mp4a");
+  const moov = box("moov", concatBytes(movieHeader(durationMs), video, audio));
+  const media = box("mdat", new Uint8Array(options.mediaPayloadBytes ?? 16));
+  return concatBytes(mp4Prefix(), media, moov);
+}
+
+function movieHeader(durationMs: number) {
+  const payload = new Uint8Array(20);
+  const view = new DataView(payload.buffer);
+  view.setUint32(12, 1_000, false);
+  view.setUint32(16, durationMs, false);
+  return box("mvhd", payload);
+}
+
+function track(handlerType: string, codec: string) {
+  const handler = new Uint8Array(12);
+  writeAscii(handler, 8, handlerType);
+  const sampleEntry = box(codec, new Uint8Array());
+  const sampleDescriptionHeader = new Uint8Array(8);
+  new DataView(sampleDescriptionHeader.buffer).setUint32(4, 1, false);
+  const stsd = box("stsd", concatBytes(sampleDescriptionHeader, sampleEntry));
+  return box("trak", box("mdia", concatBytes(
+    box("hdlr", handler),
+    box("minf", box("stbl", stsd)),
+  )));
+}
+
+function box(type: string, payload: Uint8Array) {
+  const bytes = new Uint8Array(8 + payload.byteLength);
+  new DataView(bytes.buffer).setUint32(0, bytes.byteLength, false);
+  writeAscii(bytes, 4, type);
+  bytes.set(payload, 8);
+  return bytes;
+}
+
+function concatBytes(...parts: Uint8Array[]) {
+  const result = new Uint8Array(parts.reduce((total, part) => total + part.byteLength, 0));
+  let offset = 0;
+  for (const part of parts) {
+    result.set(part, offset);
+    offset += part.byteLength;
+  }
+  return result;
+}
+
+function findBoxBytes(bytes: Uint8Array, type: string) {
+  for (let offset = 4; offset + 4 <= bytes.byteLength; offset += 1) {
+    if (String.fromCharCode(...bytes.slice(offset, offset + 4)) !== type) continue;
+    const start = offset - 4;
+    const size = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getUint32(start, false);
+    return bytes.slice(start, start + size);
+  }
+  throw new Error(`Missing ${type} box in test fixture.`);
 }

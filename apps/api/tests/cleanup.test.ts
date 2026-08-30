@@ -49,6 +49,10 @@ class MemoryDeletionStorage implements ObjectStorage {
     throw new Error("unused");
   }
 
+  async readObjectRange(): Promise<Uint8Array> {
+    throw new Error("unused");
+  }
+
   async deleteObject(key: string) {
     if (this.error) throw this.error;
     this.deleted.push(key);

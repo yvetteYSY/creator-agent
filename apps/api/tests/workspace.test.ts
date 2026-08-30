@@ -243,6 +243,10 @@ class MemoryObjectStorage implements ObjectStorage {
     return new Uint8Array();
   }
 
+  async readObjectRange() {
+    return new Uint8Array();
+  }
+
   async deleteObject(key: string) {
     if (this.deleteError) throw this.deleteError;
     this.objects.delete(key);

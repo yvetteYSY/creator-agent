@@ -11,9 +11,16 @@ export interface ScanJob {
   attempt: number;
 }
 
+export interface DetectedMediaMetadata {
+  mediaType: "video/mp4";
+  durationMs: number;
+  videoCodec: string;
+  audioCodec: string;
+}
+
 export interface ScanRepository {
   claimNext(input: { staleBefore: Date; maxAttempts: number }): Promise<ScanJob | null>;
-  complete(job: ScanJob, detectedMediaType: string): Promise<boolean>;
+  complete(job: ScanJob, media: DetectedMediaMetadata): Promise<boolean>;
   fail(job: ScanJob, failureCode: string): Promise<boolean>;
   release(job: ScanJob, failureCode: string): Promise<boolean>;
 }
@@ -91,11 +98,14 @@ export class PostgresScanRepository implements ScanRepository {
     }
   }
 
-  async complete(job: ScanJob, detectedMediaType: string) {
+  async complete(job: ScanJob, media: DetectedMediaMetadata) {
     return this.finish(job, {
       status: "processing",
       visibility: "preview",
-      detectedMediaType,
+      detectedMediaType: media.mediaType,
+      detectedDurationMs: media.durationMs,
+      detectedVideoCodec: media.videoCodec,
+      detectedAudioCodec: media.audioCodec,
       failureCode: null,
     });
   }
@@ -105,6 +115,9 @@ export class PostgresScanRepository implements ScanRepository {
       status: "failed",
       visibility: "disabled",
       detectedMediaType: null,
+      detectedDurationMs: null,
+      detectedVideoCodec: null,
+      detectedAudioCodec: null,
       failureCode,
     });
   }
@@ -114,6 +127,9 @@ export class PostgresScanRepository implements ScanRepository {
       status: "uploaded",
       visibility: "preview",
       detectedMediaType: null,
+      detectedDurationMs: null,
+      detectedVideoCodec: null,
+      detectedAudioCodec: null,
       failureCode,
     });
   }
@@ -124,6 +140,9 @@ export class PostgresScanRepository implements ScanRepository {
       status: "uploaded" | "processing" | "failed";
       visibility: "preview" | "disabled";
       detectedMediaType: string | null;
+      detectedDurationMs: number | null;
+      detectedVideoCodec: string | null;
+      detectedAudioCodec: string | null;
       failureCode: string | null;
     },
   ) {
@@ -133,8 +152,10 @@ export class PostgresScanRepository implements ScanRepository {
       await client.query("BEGIN");
       const response = await client.query(
         `UPDATE sources
-         SET status = $3, visibility = $4, detected_media_type = $5, failure_code = $6,
-           scan_completed_at = CASE WHEN $7 THEN now() ELSE scan_completed_at END,
+         SET status = $3, visibility = $4, detected_media_type = $5,
+           detected_duration_ms = $6, detected_video_codec = $7, detected_audio_codec = $8,
+           failure_code = $9,
+           scan_completed_at = CASE WHEN $10 THEN now() ELSE scan_completed_at END,
            scan_lease_id = NULL, updated_at = now()
          WHERE id = $1 AND scan_lease_id = $2 AND status = 'scanning' AND deleted_at IS NULL
          RETURNING id`,
@@ -144,6 +165,9 @@ export class PostgresScanRepository implements ScanRepository {
           result.status,
           result.visibility,
           result.detectedMediaType,
+          result.detectedDurationMs,
+          result.detectedVideoCodec,
+          result.detectedAudioCodec,
           result.failureCode,
           completed,
         ],
@@ -160,6 +184,11 @@ export class PostgresScanRepository implements ScanRepository {
             status: result.status,
             attempt: job.attempt,
             failureCode: result.failureCode,
+            ...(result.status === "processing" ? {
+              durationMs: result.detectedDurationMs,
+              videoCodec: result.detectedVideoCodec,
+              audioCodec: result.detectedAudioCodec,
+            } : {}),
           },
         });
       }

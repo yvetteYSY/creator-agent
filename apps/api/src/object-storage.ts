@@ -28,6 +28,7 @@ export interface ObjectStorage {
   }): Promise<UploadPolicy>;
   inspectObject(key: string): Promise<StoredObjectMetadata>;
   readObjectPrefix(key: string, maximumBytes: number): Promise<Uint8Array>;
+  readObjectRange(key: string, offset: number, maximumBytes: number): Promise<Uint8Array>;
   deleteObject(key: string): Promise<void>;
 }
 
@@ -158,14 +159,21 @@ export class S3ObjectStorage implements ObjectStorage {
   }
 
   async readObjectPrefix(key: string, maximumBytes: number) {
-    if (!Number.isInteger(maximumBytes) || maximumBytes < 1 || maximumBytes > 64 * 1024) {
-      throw new Error("Object prefix reads must be between 1 byte and 64 KB.");
+    return this.readObjectRange(key, 0, maximumBytes);
+  }
+
+  async readObjectRange(key: string, offset: number, maximumBytes: number) {
+    if (!Number.isSafeInteger(offset) || offset < 0) {
+      throw new Error("Object range offsets must be non-negative safe integers.");
+    }
+    if (!Number.isInteger(maximumBytes) || maximumBytes < 1 || maximumBytes > 1024 * 1024) {
+      throw new Error("Object range reads must be between 1 byte and 1 MB.");
     }
     try {
       const result = await this.client.send(new GetObjectCommand({
         Bucket: this.bucket,
         Key: key,
-        Range: `bytes=0-${maximumBytes - 1}`,
+        Range: `bytes=${offset}-${offset + maximumBytes - 1}`,
       }));
       if (!result.Body || !(Symbol.asyncIterator in result.Body)) {
         throw new StoredObjectNotFoundError("The uploaded object body was unavailable.");
@@ -179,10 +187,10 @@ export class S3ObjectStorage implements ObjectStorage {
         chunks.push(bytes);
       }
       const prefix = new Uint8Array(total);
-      let offset = 0;
+      let writeOffset = 0;
       for (const chunk of chunks) {
-        prefix.set(chunk, offset);
-        offset += chunk.byteLength;
+        prefix.set(chunk, writeOffset);
+        writeOffset += chunk.byteLength;
       }
       return prefix;
     } catch (error) {
@@ -209,6 +217,9 @@ class DisabledObjectStorage implements ObjectStorage {
     throw new ObjectStorageUnavailableError("Private object storage is not configured.");
   }
   async readObjectPrefix(): Promise<Uint8Array> {
+    throw new ObjectStorageUnavailableError("Private object storage is not configured.");
+  }
+  async readObjectRange(): Promise<Uint8Array> {
     throw new ObjectStorageUnavailableError("Private object storage is not configured.");
   }
   async deleteObject() {

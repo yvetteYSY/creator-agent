@@ -24,6 +24,7 @@ suite("PostgreSQL creator workspace integration", () => {
       "005_quarantine_scanning.sql",
       "006_storage_deletion_reconciliation.sql",
       "007_ingestion_audit_events.sql",
+      "008_media_inspection.sql",
     ]) {
       const sql = await readFile(new URL(`../migrations/${migration}`, import.meta.url), "utf8");
       await pool!.query(sql);
@@ -107,8 +108,29 @@ suite("PostgreSQL creator workspace integration", () => {
     await expect(scanner.complete({
       ...scanJob!,
       leaseId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
-    }, "video/mp4")).resolves.toBe(false);
-    await expect(scanner.complete(scanJob!, "video/mp4")).resolves.toBe(true);
+    }, {
+      mediaType: "video/mp4",
+      durationMs: 182_200,
+      videoCodec: "avc1",
+      audioCodec: "mp4a",
+    })).resolves.toBe(false);
+    await expect(scanner.complete(scanJob!, {
+      mediaType: "video/mp4",
+      durationMs: 182_200,
+      videoCodec: "avc1",
+      audioCodec: "mp4a",
+    })).resolves.toBe(true);
+    const inspected = await pool!.query(
+      `SELECT detected_media_type, detected_duration_ms, detected_video_codec, detected_audio_codec
+       FROM sources WHERE id = $1`,
+      [source.id],
+    );
+    expect(inspected.rows[0]).toMatchObject({
+      detected_media_type: "video/mp4",
+      detected_duration_ms: "182200",
+      detected_video_codec: "avc1",
+      detected_audio_codec: "mp4a",
+    });
     expect(await workspace.listSources(ownerA.id, agent.id))
       .toContainEqual(expect.objectContaining({ id: source.id, status: "processing", visibility: "preview" }));
     await expect(workspace.updateSourceVisibility(ownerA.id, agent.id, source.id, "public"))
@@ -155,7 +177,12 @@ suite("PostgreSQL creator workspace integration", () => {
     expect(cancelledScan?.sourceId).toBe(scanningSource.id);
     await expect(workspace.deleteSource(ownerA.id, agent.id, scanningSource.id))
       .resolves.toEqual({ storageKey: "private-uploads/delete-during-scan" });
-    await expect(scanner.complete(cancelledScan!, "video/mp4")).resolves.toBe(false);
+    await expect(scanner.complete(cancelledScan!, {
+      mediaType: "video/mp4",
+      durationMs: 182_200,
+      videoCodec: "avc1",
+      audioCodec: "mp4a",
+    })).resolves.toBe(false);
     const cancelledCleanup = await cleanup.claimNext({
       staleBefore: new Date("2026-08-25T00:00:00.000Z"),
       maxAttempts: 100,
