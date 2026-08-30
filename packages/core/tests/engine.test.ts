@@ -194,6 +194,77 @@ describe("CreatorAgentEngine", () => {
     );
   });
 
+  it("ingests a creator-provided WebVTT transcript as timestamped video knowledge", () => {
+    const { engine, agent } = createPublishedFixture();
+    const video = engine.ingestTranscribedVideoSource({
+      ownerId: "creator-a",
+      agentId: agent.id,
+      title: "Creator workshop",
+      fileName: "workshop.mp4",
+      mimeType: "video/mp4",
+      size: 3_260_038,
+      visibility: "public",
+      transcript: `WEBVTT
+
+1
+00:00:01.000 --> 00:00:04.250
+Choose a specific workspace for the task you want to complete.
+
+2
+00:00:05.000 --> 00:00:09.500
+Each workspace can keep its own panels and editor arrangement.`,
+    });
+    const conversation = engine.createConversation(agent.id, "audience-transcript");
+    const result = engine.sendMessage({
+      agentId: agent.id,
+      conversationId: conversation.id,
+      userId: "audience-transcript",
+      question: "How do workspaces keep panels arranged?",
+      idempotencyKey: "timestamped-video",
+    });
+
+    expect(video.status).toBe("ready");
+    expect(video.chunks).toEqual([
+      expect.objectContaining({
+        text: "Choose a specific workspace for the task you want to complete.",
+        location: "00:01–00:04",
+      }),
+      expect.objectContaining({
+        text: "Each workspace can keep its own panels and editor arrangement.",
+        location: "00:05–00:09",
+      }),
+    ]);
+    expect(result.assistantMessage.citations).toEqual([
+      expect.objectContaining({ sourceId: video.id, location: "00:05–00:09" }),
+    ]);
+  });
+
+  it("rejects malformed, empty, or oversized WebVTT sidecars", () => {
+    const { engine, agent } = createPublishedFixture();
+    const base = {
+      ownerId: "creator-a",
+      agentId: agent.id,
+      title: "Creator workshop",
+      fileName: "workshop.mp4",
+      mimeType: "video/mp4",
+      size: 3_260_038,
+      visibility: "preview" as const,
+    };
+
+    expect(() => engine.ingestTranscribedVideoSource({ ...base, transcript: "not WebVTT" }))
+      .toThrowError(/valid WebVTT/i);
+    expect(() => engine.ingestTranscribedVideoSource({ ...base, transcript: "WEBVTT\n\nNOTE no cues" }))
+      .toThrowError(/caption cue/i);
+    expect(() => engine.ingestTranscribedVideoSource({
+      ...base,
+      transcript: `WEBVTT\n\n1\n00:00:05.000 --> 00:00:04.000\nBackwards`,
+    })).toThrowError(/timestamp range/i);
+    expect(() => engine.ingestTranscribedVideoSource({
+      ...base,
+      transcript: `WEBVTT\n\n${"x".repeat(2_000_001)}`,
+    })).toThrowError(/2 MB/i);
+  });
+
   it("rejects unsupported or oversized video files", () => {
     const { engine, agent } = createPublishedFixture();
     const base = {

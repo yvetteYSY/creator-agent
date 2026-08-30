@@ -18,10 +18,10 @@ The default simulator is intentionally deterministic and local. **It makes no AI
 | Owner-scoped workspace API | Authenticated routes create, list, read, and version agents plus private-by-default source metadata. Every database path includes the verified internal owner ID. |
 | Durable studio synchronization | Auth0 mode loads or bootstraps the creator's agent, restores customization, and persists configuration plus new source metadata updates. Local mode remains network-free. |
 | Creator studio | A seeded creator can manage an agent and its knowledge sources in a responsive web interface. |
-| Text ingestion | Document or audio-transcript text can be pasted, chunked, and indexed in browser memory. |
+| Text ingestion | Document or audio-transcript text can be pasted, chunked, and indexed in browser memory. Local video can also use a creator-provided WebVTT sidecar to create timestamped chunks without an AI call. |
 | Private MP4 upload | In managed Auth0 mode, an MP4 up to 250 MB uploads directly to private S3-compatible storage through a 10-minute, exact-key/type/size policy. The Auth0 token is sent only to the API, never to storage. Local mode still stages the file without a network request. |
 | Quarantine scan boundary | A zero-AI one-shot worker safely claims uploaded sources with PostgreSQL leases, reads at most 4 KB, checks the ISO BMFF `ftyp` box/brand, and moves valid files to **Awaiting transcription** or deletes/disables invalid signatures. |
-| Honest video status | A staged video remains **Awaiting transcription**; a durable upload stops at **Uploaded**. Neither state can be retrieved or cited, and the simulator never pretends it understood the video. |
+| Honest video status | A video without captions remains **Awaiting transcription**, and a durable upload stops at **Uploaded**. In local mode only, a valid creator-provided WebVTT sidecar makes timestamped caption chunks ready for preview or explicit public approval. |
 | Source privacy | Sources are preview-only by default and require explicit approval for public answers. Processing, disabled, preview-only, and deleted sources are excluded from public retrieval. |
 | Grounded chat | A deterministic local retrieval engine answers from approved text and returns source citations or says that it lacks enough information. |
 | Multi-user conversations | Maya, Theo, and Jules have isolated histories; one audience member cannot read another's conversation. |
@@ -41,7 +41,7 @@ The default simulator is intentionally deterministic and local. **It makes no AI
 - Default local-simulator state is held in memory and resets on refresh; configured Auth0 mode persists the creator workspace through the API.
 - The interface is a mobile-responsive web simulator, not yet an Expo/React Native app.
 - The protected API persists creator identity, agents, versioned configuration, source privacy metadata, and private-upload lifecycle metadata. Auth0 mode can upload MP4 bytes when S3-compatible storage is explicitly configured; local mode and pasted text remain browser-only.
-- Uploaded video is not automatically scanned. The opt-in one-shot worker performs only a preliminary bounded MP4 signature check; full container parsing, duration/codec validation, malware scanning, decoding, transcription, and embedding are not implemented. No current video state is available to answers.
+- Uploaded video is not automatically scanned. The opt-in one-shot worker performs only a preliminary bounded MP4 signature check; full container parsing, duration/codec validation, malware scanning, decoding, automatic transcription, and embedding are not implemented. A local video becomes available to deterministic retrieval only when its creator supplies a valid WebVTT sidecar; that transcript is not yet persisted in managed mode.
 - Pasted text uses deterministic term matching rather than model-based embeddings or generation.
 - A real user-owned endpoint may create costs for its owner; Creator Agent never silently uses a platform or developer AI key.
 
@@ -69,14 +69,14 @@ npm run cleanup:once # Reconcile at most one tombstoned stored object; requires 
 
 ### What to try
 
-1. Add a pasted source, or choose **Video file**. Local mode stages MP4, WebM, or QuickTime metadata; configured Auth0 mode privately uploads MP4 only.
+1. Add a pasted source, or choose **Video file**. Local mode can pair MP4, WebM, or QuickTime with an optional WebVTT transcript; configured Auth0 mode privately uploads MP4 only.
 2. Open the audience preview and ask one of the suggested questions.
 3. Open **Customize** and change voice preset, response depth, signature phrases, or boundaries.
 4. Switch between Maya, Theo, and Jules to see isolated conversations.
 5. Open **Load lab** and change traffic, concurrency, and queue limits.
 6. Observe bounded rejection when a popular agent exceeds safe capacity.
 
-In default local mode, simulator state resets on refresh and pasted content or selected video bytes never leave the browser. In configured Auth0 mode, agent/source metadata persists and MP4 bytes upload directly to private object storage; the browser never receives storage credentials and never sends its Auth0 bearer token to storage. In both modes, video stays unavailable to retrieval until future scanning and transcription stages complete. See [private video uploads](docs/PRIVATE_UPLOADS.md).
+In default local mode, simulator state resets on refresh and pasted content, selected video bytes, and WebVTT captions never leave the browser. A valid sidecar creates timestamped local knowledge immediately without calling an AI provider. In configured Auth0 mode, agent/source metadata persists and MP4 bytes upload directly to private object storage; the browser never receives storage credentials and never sends its Auth0 bearer token to storage. Managed video stays unavailable to retrieval until future scanning and transcription stages complete. See [local WebVTT ingestion](docs/LOCAL_VIDEO_TRANSCRIPTS.md) and [private video uploads](docs/PRIVATE_UPLOADS.md).
 
 ### Zero-cost end-to-end routing
 
@@ -102,7 +102,7 @@ To connect a real user-owned agent, replace the local URL with an HTTPS endpoint
 - Upload retries, resumable/multipart upload, audit retention/export controls, and retention-policy verification
 - Full media/container validation, duration/codec limits, malware scanning, and parser sandboxing
 - PDF, Markdown, and plain-text file extraction
-- Real audio/video transcription and timestamped transcript review
+- Automatic audio/video transcription and durable transcript review/persistence
 - Embeddings, vector retrieval, model generation, and streaming responses
 - Native Expo/React Native application
 - Broader agent/publishing audit events, rate limits, moderation, and account-deletion jobs
@@ -127,7 +127,7 @@ Keep the current deterministic simulator as a zero-cost product demo and regress
 2. **Available:** upload directly to private object storage without proxying large video bytes or forwarding the Auth0 token.
 3. **Partially available:** pin declared MIME type and exact byte size, verify stored metadata, then read at most 4 KB to check a supported ISO BMFF `ftyp` signature. Full parsing, duration limits, and malware scanning remain next.
 4. **Partially available:** lease-based, concurrency-safe one-shot worker with `uploaded → scanning → processing/failed`; continuous scheduling and `transcribing → ready` remain next.
-5. Route transcription to either a self-hosted worker or a creator-owned endpoint. Record the selected processor and usage without logging content.
+5. **Available in local simulation:** accept a creator-provided WebVTT sidecar and build timestamped deterministic chunks without an AI call. Next, route automatic transcription to either a self-hosted worker or a creator-owned endpoint and record the selected processor and usage without logging content.
 6. Let the creator review the timestamped transcript before approving it for public answers.
 
 **Exit test:** an uploaded video becomes a reviewable, timestamped source; failed, unapproved, or deleted content never appears in chat.
@@ -204,6 +204,7 @@ creator-agent/
 │   ├── API.md           # Protected API setup and identity data boundary
 │   ├── AUTHENTICATION.md # Auth0 OIDC setup and security boundary
 │   ├── CUSTOMIZATION.md # Knowledge/style separation and evaluation
+│   ├── LOCAL_VIDEO_TRANSCRIPTS.md # Zero-cost WebVTT sidecar workflow
 │   ├── PRIVATE_UPLOADS.md # Signed MP4 upload and data-protection boundary
 │   └── DESIGN.md        # Product, architecture, privacy, and scale design
 ├── package.json         # npm workspace scripts

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 import { LocalAuthProvider } from "./auth";
@@ -89,6 +89,33 @@ describe("Creator Agent simulator", () => {
     expect(screen.getByText("creator-workshop")).toBeTruthy();
     expect(screen.getByText(/awaiting transcription/i)).toBeTruthy();
     expect(screen.getByText(/remain unavailable to answers/i)).toBeTruthy();
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("processes a creator-provided WebVTT transcript locally with timestamped sections", async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+    renderApp();
+
+    fireEvent.click(screen.getByRole("button", { name: /add source/i }));
+    fireEvent.change(screen.getByLabelText(/content type/i), { target: { value: "video" } });
+    const video = new File(["local video bytes"], "workspace-guide.mp4", { type: "video/mp4" });
+    const captions = new File([
+      "WEBVTT\n\n1\n00:00:01.000 --> 00:00:04.000\nWorkspaces keep panels organized.\n\n2\n00:00:05.000 --> 00:00:08.000\nChoose a workspace for each task.",
+    ], "workspace-guide.en.vtt", { type: "text/vtt" });
+    fireEvent.change(screen.getByLabelText(/^video file$/i), { target: { files: [video] } });
+    fireEvent.change(screen.getByLabelText(/webvtt transcript/i), { target: { files: [captions] } });
+    fireEvent.click(screen.getByRole("button", { name: /process video \+ transcript/i }));
+
+    const title = await screen.findByText("workspace-guide");
+    const row = title.closest("article");
+    expect(row).not.toBeNull();
+    expect(within(row!).getByText("Ready")).toBeTruthy();
+    expect(within(row!).getByText(/2 timestamped sections/i)).toBeTruthy();
+    expect(screen.getByText(/processed locally without an ai call/i)).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("Visibility for workspace-guide"), { target: { value: "public" } });
+    fireEvent.click(screen.getByRole("button", { name: /open audience preview/i }));
+    expect(screen.getByText(/grounded in 3 sources/i)).toBeTruthy();
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 

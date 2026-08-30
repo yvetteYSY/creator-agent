@@ -208,7 +208,17 @@ export function App() {
               );
             }}
             onStageVideo={(input) => {
-              const { file, ...metadata } = input;
+              const { file, transcript, ...metadata } = input;
+              if (transcript) {
+                const source = runtime.engine.ingestTranscribedVideoSource({
+                  ownerId: runtime.ownerId,
+                  agentId: runtime.agentId,
+                  ...metadata,
+                  transcript,
+                });
+                refresh(`Video and ${source.chunks.length} timestamped sections processed locally without an AI call.`);
+                return;
+              }
               const source = runtime.engine.stageVideoSource({
                 ownerId: runtime.ownerId,
                 agentId: runtime.agentId,
@@ -356,7 +366,7 @@ function Studio({
   sources: Source[];
   uploadsEnabled: boolean;
   onAddSource: (input: { title: string; kind: SourceKind; content: string; visibility: SourceVisibility }) => void;
-  onStageVideo: (input: { title: string; file: File; fileName: string; mimeType: string; size: number; visibility: SourceVisibility }) => void;
+  onStageVideo: (input: { title: string; file: File; fileName: string; mimeType: string; size: number; visibility: SourceVisibility; transcript?: string }) => void;
   onVisibility: (sourceId: string, visibility: SourceVisibility) => void;
   onDelete: (sourceId: string) => void;
   onPreview: () => void;
@@ -369,9 +379,10 @@ function Studio({
   const [visibility, setVisibility] = useState<SourceVisibility>("preview");
   const [content, setContent] = useState("");
   const [videoFile, setVideoFile] = useState<File | null>(null);
+  const [transcriptFile, setTranscriptFile] = useState<File | null>(null);
   const [error, setError] = useState("");
 
-  const submit = (event: React.FormEvent) => {
+  const submit = async (event: React.FormEvent) => {
     event.preventDefault();
     try {
       if (kind === "video") {
@@ -383,6 +394,7 @@ function Studio({
           mimeType: videoFile.type,
           size: videoFile.size,
           visibility,
+          transcript: transcriptFile ? await transcriptFile.text() : undefined,
         });
       } else {
         onAddSource({ title, kind, content, visibility });
@@ -390,6 +402,7 @@ function Studio({
       setTitle("");
       setContent("");
       setVideoFile(null);
+      setTranscriptFile(null);
       setVisibility("preview");
       setShowForm(false);
       setError("");
@@ -442,7 +455,10 @@ function Studio({
                     const nextKind = event.target.value as SourceKind;
                     setKind(nextKind);
                     setError("");
-                    if (nextKind !== "video") setVideoFile(null);
+                    if (nextKind !== "video") {
+                      setVideoFile(null);
+                      setTranscriptFile(null);
+                    }
                   }}>
                     <option value="document">Document</option>
                     <option value="video">Video file</option>
@@ -451,6 +467,7 @@ function Studio({
                 </label>
               </div>
               {kind === "video" ? (
+                <div className="video-inputs">
                 <label className="video-picker">
                   Video file
                   <span className={videoFile ? "file-drop selected" : "file-drop"}>
@@ -473,8 +490,32 @@ function Studio({
                   </span>
                   <span className="processing-explainer"><Clock3 /> {uploadsEnabled
                     ? "After private upload, the source stays unavailable until signature validation, malware scanning, and transcription are implemented."
-                    : "This zero-cost prototype stages metadata only. The source stays in processing and cannot answer questions until a creator-owned or self-hosted transcription route is connected."}</span>
+                    : transcriptFile
+                      ? "The WebVTT captions become timestamped knowledge locally. Neither file leaves this browser."
+                      : "Without a WebVTT sidecar, the source stays in processing and cannot answer questions."}</span>
                 </label>
+                {!uploadsEnabled && (
+                  <label className="video-picker">
+                    WebVTT transcript (optional)
+                    <span className={transcriptFile ? "file-drop selected" : "file-drop"}>
+                      <FileText aria-hidden="true" />
+                      <span>
+                        <strong>{transcriptFile?.name ?? "Choose matching timed captions"}</strong>
+                        <small>{transcriptFile ? `${formatBytes(transcriptFile.size)} · processed locally` : ".vtt · up to 2 MB · no AI call"}</small>
+                      </span>
+                      <input
+                        aria-label="WebVTT transcript"
+                        type="file"
+                        accept="text/vtt,.vtt"
+                        onChange={(event) => {
+                          setTranscriptFile(event.target.files?.[0] ?? null);
+                          setError("");
+                        }}
+                      />
+                    </span>
+                  </label>
+                )}
+                </div>
               ) : (
                 <label>
                   Extracted content
@@ -497,7 +538,7 @@ function Studio({
               {error && <p className="form-error" role="alert">{error}</p>}
               <div className="form-actions">
                 <button className="button ghost" type="button" onClick={() => setShowForm(false)}>Cancel</button>
-                <button className="button primary" type="submit">{kind === "video" ? <UploadCloud aria-hidden="true" /> : <Sparkles aria-hidden="true" />} {kind === "video" ? uploadsEnabled ? "Upload video privately" : "Stage video" : "Process source"}</button>
+                <button className="button primary" type="submit">{kind === "video" ? <UploadCloud aria-hidden="true" /> : <Sparkles aria-hidden="true" />} {kind === "video" ? uploadsEnabled ? "Upload video privately" : transcriptFile ? "Process video + transcript" : "Stage video" : "Process source"}</button>
               </div>
             </form>
           )}
@@ -514,7 +555,7 @@ function Studio({
                       {source.status === "processing" ? "Awaiting transcription" : "Ready"}
                     </span>
                   </div>
-                  <p>{source.status === "processing" ? source.processingDetail : `${source.chunks.length} sections`} · {formatBytes(source.size)} · {source.kind}</p>
+                  <p>{source.status === "processing" ? source.processingDetail : `${source.chunks.length}${source.kind === "video" ? " timestamped" : ""} sections`} · {formatBytes(source.size)} · {source.kind}</p>
                 </div>
                 <select
                   className={`visibility-select ${source.visibility}`}
@@ -714,6 +755,8 @@ function Preview({
   const [error, setError] = useState("");
   const [sending, setSending] = useState(false);
   const agent = runtime.engine.getAgent(runtime.agentId);
+  const groundedSourceCount = runtime.engine.listSources(runtime.ownerId, runtime.agentId)
+    .filter((source) => source.status === "ready" && source.visibility === "public").length;
   const conversation = runtime.engine.getConversation(runtime.conversations[audienceId], audienceId);
 
   const send = async (value: string) => {
@@ -772,7 +815,7 @@ function Preview({
           <div className="phone-status"><span>9:41</span><span>● ●●</span></div>
           <div className="chat-header">
             <div className="agent-avatar"><Sparkles /></div>
-            <div><strong>{agent.name}</strong><span><i /> AI agent · grounded in 2 sources</span></div>
+            <div><strong>{agent.name}</strong><span><i /> AI agent · grounded in {groundedSourceCount} sources</span></div>
           </div>
           <div className={route.mode === "local" ? "disclosure" : "disclosure remote"}>
             {route.mode === "local" ? <Bot /> : <Cable />}
