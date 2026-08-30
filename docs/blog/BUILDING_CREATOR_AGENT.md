@@ -2,7 +2,9 @@
 
 *How we designed a mobile-first agent builder that learns from creator content, protects private uploads, supports many audience members, and never silently spends the developer's AI tokens.*
 
-![Creator Agent end-to-end prototype](https://raw.githubusercontent.com/yvetteYSY/creator-agent/main/docs/assets/creator-agent-e2e-poster.jpg)
+[![Watch the narrated Creator Agent end-to-end prototype](https://raw.githubusercontent.com/yvetteYSY/creator-agent/main/docs/assets/creator-agent-e2e-poster.jpg)](https://github.com/yvetteYSY/creator-agent/blob/main/docs/assets/creator-agent-e2e-demo.mp4)
+
+*▶ [Watch the narrated, captioned 33-second demo video](https://github.com/yvetteYSY/creator-agent/blob/main/docs/assets/creator-agent-e2e-demo.mp4) or [read its transcript](https://github.com/yvetteYSY/creator-agent/blob/main/docs/assets/creator-agent-e2e-transcript.vtt).*
 
 Creators already have the raw material for a useful AI agent: articles, guides, videos, transcripts, courses, and a recognizable way of explaining things. What they often do not have is a safe, understandable way to turn that library into an agent their audience can use.
 
@@ -17,6 +19,12 @@ The constraints made the work interesting:
 - The architecture should show a credible path to production without pretending the prototype is already production-ready.
 
 We turned those constraints into a test-first, mobile-responsive MVP and an executable system design.
+
+## Prototype preview
+
+![Creator Agent audience preview showing a grounded answer with source citations](https://raw.githubusercontent.com/yvetteYSY/creator-agent/main/docs/assets/creator-agent-audience-preview.jpg)
+
+*The mobile audience preview answering from explicitly approved creator knowledge. Each answer links back to the excerpts that support it, while the banner makes the zero-cost deterministic mode visible.*
 
 ## What we built
 
