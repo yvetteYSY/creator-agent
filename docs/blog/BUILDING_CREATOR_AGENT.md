@@ -34,7 +34,15 @@ The current Creator Agent repository contains a responsive web simulator, a prot
 
 The studio lets a creator add source material, inspect its status, decide whether it can be used in public answers, and remove it. Sources start private and preview-only. Public retrieval includes only sources that are ready and explicitly approved.
 
+![Creator Agent studio showing approved and preview-only knowledge sources](https://raw.githubusercontent.com/yvetteYSY/creator-agent/main/docs/assets/creator-agent-studio.jpg)
+
+*The creator studio keeps source status and publication scope visible. Ready content can still remain preview-only.*
+
 This sounds like a small interface choice, but it establishes an important rule: uploading content and publishing knowledge are separate actions. A creator can experiment without accidentally exposing unfinished, sensitive, or incorrectly processed material.
+
+![Creator Agent add-source form with preview-only selected by default](https://raw.githubusercontent.com/yvetteYSY/creator-agent/main/docs/assets/creator-agent-add-source.jpg)
+
+*New material begins preview-only, and the local simulator states clearly that pasted content remains in the browser.*
 
 ### Grounded answers with visible citations
 
@@ -57,6 +65,10 @@ The knowledge layer controls approved sources and citations. The style layer con
 
 This separation matters. Tone should never override grounding, and a source should never silently redefine safety boundaries. Production generation can eventually combine both layers, but the system keeps their responsibilities distinct.
 
+![Creator Agent customization screen showing depth, signature phrases, prohibited topics, and behavioral boundaries](https://raw.githubusercontent.com/yvetteYSY/creator-agent/main/docs/assets/creator-agent-customization.jpg)
+
+*Structured controls make response depth, signature language, prohibited topics, and behavioral boundaries independently reviewable.*
+
 ### Bring Your Own Agent without a hidden fallback
 
 One of the earliest product decisions was that the prototype would not consume a developer-owned AI key. Creator Agent therefore supports two explicit routes:
@@ -67,6 +79,10 @@ One of the earliest product decisions was that the prototype would not consume a
 When a creator selects their own endpoint, the interface explains the processing boundary before activation. Only bounded conversation history and approved excerpts are sent. Any model cost belongs to the endpoint owner. There is no silent fallback to a platform key.
 
 That clarity is useful beyond cost control. It makes data movement visible and gives creators a path to use a provider, self-hosted model, or existing agent that matches their requirements.
+
+![Creator Agent routing screen showing deterministic local and user-owned endpoint options](https://raw.githubusercontent.com/yvetteYSY/creator-agent/main/docs/assets/creator-agent-routing.jpg)
+
+*Routing is an explicit creator choice: deterministic local execution or a user-owned endpoint with a visible processing boundary.*
 
 ### Managed authentication and durable tenant boundaries
 
@@ -100,6 +116,10 @@ The model demonstrates two fairness rules. One popular creator should not consum
 
 This is not a substitute for production load testing, but it turns concurrency from an abstract architecture note into a product behavior the team can inspect and test.
 
+![Creator Agent load lab showing traffic, concurrency, queue, and fairness controls](https://raw.githubusercontent.com/yvetteYSY/creator-agent/main/docs/assets/creator-agent-load-lab.jpg)
+
+*The load lab exposes traffic concentration, platform capacity, bounded queues, and per-agent fairness as product behavior.*
+
 ## The architecture in one view
 
 The system separates identity, metadata, media, processing, retrieval, and generation:
@@ -129,37 +149,21 @@ We also recorded a narrated and captioned [33-second end-to-end prototype](https
 
 ## Key lessons
 
-### 1. A useful prototype should encode invariants, not imitate magic
+- **A useful prototype should encode invariants, not imitate magic.** The local retrieval engine is intentionally modest, but it proves the rules that must survive a future model integration. A prototype becomes more valuable when it can catch privacy and product regressions instead of merely producing an impressive response once.
 
-The local retrieval engine is intentionally modest, but it proves the rules that must survive a future model integration. A prototype becomes more valuable when it can catch privacy and product regressions instead of merely producing an impressive response once.
+- **Privacy is a state machine.** “We protect uploads” is too vague to implement. Privacy became concrete only after defining states and allowed transitions: quarantined, scanning, processing, awaiting transcription, preview-only, approved, disabled, tombstoned, and physically deleted. Retrieval can then fail closed based on state.
 
-### 2. Privacy is a state machine
+- **Tenant isolation belongs in every query.** Authentication identifies a caller; it does not prove ownership of a requested agent or source. Mapping the verified external identity to an internal ID and including that ID in every resource query is the core multi-tenant rule.
 
-“We protect uploads” is too vague to implement. Privacy became concrete only after defining states and allowed transitions: quarantined, scanning, processing, awaiting transcription, preview-only, approved, disabled, tombstoned, and physically deleted. Retrieval can then fail closed based on state.
+- **Zero-cost mode improves the product.** Avoiding a hidden AI bill led to a clearer routing design. The UI identifies who owns the endpoint, what data leaves the platform, and when cost can occur. Deterministic mode is now useful for onboarding, demos, CI, privacy testing, and offline development—not just as a temporary workaround.
 
-### 3. Tenant isolation belongs in every query
+- **Video processing needs explicit trust boundaries.** Upload, validation, malware scanning, transcription, transcript review, and publication are different operations with different failure modes. Combining them into one “processing” step would make retries, deletion, audit, and user consent harder to reason about.
 
-Authentication identifies a caller; it does not prove ownership of a requested agent or source. Mapping the verified external identity to an internal ID and including that ID in every resource query is the core multi-tenant rule.
+- **Customization needs structure.** A creator's “tone” should not be one large prompt field. Structured, versioned controls are easier to preview, validate, migrate, audit, and eventually evaluate. Keeping style separate from evidence also reduces the chance that personality settings weaken grounding.
 
-### 4. Zero-cost mode improves the product
+- **Concurrency is part of the user experience.** Queues and limits determine whether an audience sees a fast answer, a long spinner, or a clear retry message. Modeling per-agent fairness early exposed product decisions that would otherwise surface only during an incident.
 
-Avoiding a hidden AI bill led to a clearer routing design. The UI identifies who owns the endpoint, what data leaves the platform, and when cost can occur. Deterministic mode is now useful for onboarding, demos, CI, privacy testing, and offline development—not just as a temporary workaround.
-
-### 5. Video processing needs explicit trust boundaries
-
-Upload, validation, malware scanning, transcription, transcript review, and publication are different operations with different failure modes. Combining them into one “processing” step would make retries, deletion, audit, and user consent harder to reason about.
-
-### 6. Customization needs structure
-
-A creator's “tone” should not be one large prompt field. Structured, versioned controls are easier to preview, validate, migrate, audit, and eventually evaluate. Keeping style separate from evidence also reduces the chance that personality settings weaken grounding.
-
-### 7. Concurrency is part of the user experience
-
-Queues and limits determine whether an audience sees a fast answer, a long spinner, or a clear retry message. Modeling per-agent fairness early exposed product decisions that would otherwise surface only during an incident.
-
-### 8. Production readiness is mostly operational truth
-
-The MVP demonstrates secure boundaries, but production still requires native mobile delivery, durable audience conversations, automatic transcription or a creator-owned transcription route, tenant-filtered vector retrieval, moderation, quotas, observability, backup and restore drills, retention enforcement, and account deletion workflows.
+- **Production readiness is mostly operational truth.** The MVP demonstrates secure boundaries, but production still requires native mobile delivery, durable audience conversations, automatic transcription or a creator-owned transcription route, tenant-filtered vector retrieval, moderation, quotas, observability, backup and restore drills, retention enforcement, and account deletion workflows.
 
 Calling those gaps out is not a weakness. It makes the next milestones measurable.
 
