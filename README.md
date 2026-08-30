@@ -8,6 +8,12 @@ The repository contains a test-first, responsive web MVP simulator. It demonstra
 
 The default simulator is intentionally deterministic and local. **It makes no AI-provider calls, consumes no AI tokens, and cannot create model charges.** Managed Auth0 mode explicitly connects to Auth0 and the protected Creator Agent API, but neither path invokes an AI provider.
 
+## E2E prototype video
+
+[![Watch the Creator Agent end-to-end prototype](docs/assets/creator-agent-e2e-poster.jpg)](docs/assets/creator-agent-e2e-demo.mp4)
+
+Watch a 33-second walkthrough of the creator studio, source ingestion, grounded answers with citations, agent customization, user-owned routing, and multi-user load controls. The recording uses the deterministic local simulator and makes no AI-provider calls or token-consuming requests.
+
 ### Available now
 
 | Capability | Current implementation |
