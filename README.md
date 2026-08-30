@@ -14,6 +14,8 @@ The default simulator is intentionally deterministic and local. **It makes no AI
 
 Watch a narrated, captioned 33-second walkthrough of the creator studio, source ingestion, grounded answers with citations, agent customization, user-owned routing, and multi-user load controls. A separate [WebVTT transcript](docs/assets/creator-agent-e2e-transcript.vtt) is available for accessibility. The simulated product flow remains deterministic and makes no AI-provider or token-consuming requests; narration was synthesized from the published transcript without a developer API key.
 
+For the complete build retrospective and key lessons, read [Building Creator Agent: A Privacy-First, Zero-Cost Path from Idea to Tested MVP](docs/blog/BUILDING_CREATOR_AGENT.md).
+
 ### Available now
 
 | Capability | Current implementation |
