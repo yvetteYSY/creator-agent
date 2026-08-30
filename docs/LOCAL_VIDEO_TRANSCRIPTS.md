@@ -2,7 +2,7 @@
 
 The MVP can turn a video into timestamped, searchable knowledge without calling a transcription or AI provider when the creator already has a matching WebVTT (`.vtt`) caption file.
 
-This path is intentionally local-only. It is useful for end-to-end product testing, creator review, and zero-cost demos while the private managed transcription pipeline is still being designed.
+The simulator path is intentionally browser-local. The protected API now also supports a separate durable creator-provided WebVTT workflow after a managed video passes quarantine scanning; the managed UI is still pending.
 
 ## Try it
 
@@ -26,7 +26,7 @@ The local parser requires:
 
 Basic WebVTT markup is removed before indexing. Each resulting citation uses the cue's start and end time, such as `02:57–03:02`.
 
-This is caption ingestion, not speech recognition. The MVP does not claim that the transcript matches the audio, identify speakers, inspect the full media container, scan for malware, or verify that the creator owns the content.
+This is caption ingestion, not speech recognition. The local path does not claim that the transcript matches the audio, identify speakers, inspect the full media container, scan for malware, or verify that the creator owns the content. The managed API additionally requires a clean structural/ClamAV scan and rejects cues that extend materially beyond the inspected video duration, but still cannot prove semantic correspondence or ownership.
 
 ## Privacy and cost boundary
 
@@ -38,8 +38,10 @@ In local authentication mode:
 - preview-only chunks are never sent to public chat or a user-owned agent endpoint;
 - deleting or disabling the source immediately excludes its chunks from retrieval.
 
-Managed Auth0 mode does not expose the sidecar control yet. It continues to upload MP4 bytes privately and holds them outside retrieval until the durable scanning, transcription, review, and approval stages exist.
+Managed Auth0 mode does not expose the sidecar control in the simulator yet. After a video reaches `processing`, an authenticated client can `PUT` a WebVTT draft to `/v1/agents/:agentId/sources/:sourceId/transcript`, read it with `GET`, and `PATCH` it to `approved` or `rejected`. Every operation derives the owner from the verified token. Approval moves the source to `ready`/preview; it does not publish automatically. Replacing captions returns the source to `processing`/preview.
+
+Managed captions are stored separately from video bytes in PostgreSQL and must be encrypted at rest in production. Full caption text is returned only to the owning creator, never written to audit metadata, and immediately overwritten when the source is deleted. Backups still require a documented expiry policy before production.
 
 ## Production follow-up
 
-The managed path should store transcripts separately from originals, encrypt both, preserve tenant ownership on every row and object key, record the processor and consent basis without logging content, and require creator review before a transcript can become public. Deletion must cover originals, captions, chunks, embeddings, caches, and retained backups according to the published retention policy.
+Next, approved cues must be materialized into tenant-filtered durable chunks without copying unapproved content into retrieval. Future automatic processors must record processor and consent basis without logging content. Deletion must expand from the implemented original/caption removal to chunks, embeddings, caches, and retained backups according to the published retention policy.

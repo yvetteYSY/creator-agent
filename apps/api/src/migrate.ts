@@ -14,6 +14,7 @@ const migrations = [
   "007_ingestion_audit_events.sql",
   "008_media_inspection.sql",
   "009_malware_scanning.sql",
+  "010_creator_transcripts.sql",
 ];
 const pool = new Pool({ connectionString: databaseUrl });
 const client = await pool.connect();

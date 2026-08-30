@@ -16,6 +16,9 @@ The API resolves a signed-in Auth0 identity to a durable internal creator record
 | `POST /v1/agents/:agentId/sources` | `write:agent` | Create private, awaiting-upload source metadata |
 | `POST /v1/agents/:agentId/sources/uploads` | `write:agent` | Authorize one private direct MP4 upload |
 | `POST /v1/agents/:agentId/sources/:sourceId/complete` | `write:agent` | Verify stored size/type and mark the source uploaded |
+| `GET /v1/agents/:agentId/sources/:sourceId/transcript` | `read:creator` | Read the caller-owned transcript draft or reviewed version |
+| `PUT /v1/agents/:agentId/sources/:sourceId/transcript` | `write:agent` | Validate and save/version a creator-provided WebVTT draft after clean scanning |
+| `PATCH /v1/agents/:agentId/sources/:sourceId/transcript` | `write:agent` | Approve or reject a draft; approval moves the preview-only source to ready |
 | `PATCH /v1/agents/:agentId/sources/:sourceId` | `write:agent` | Change source visibility; public requires ready status |
 | `DELETE /v1/agents/:agentId/sources/:sourceId` | `write:agent` | Tombstone immediately; return `200` after object deletion or `202` when durable cleanup remains pending |
 
@@ -28,6 +31,8 @@ Generic source creation accepts only a display `title` and `type` (`document`, `
 Private upload authorization accepts a title, `.mp4` filename, exact `video/mp4` content type, and integer size from 1 byte through 250 MB. It returns a 10-minute S3-compatible POST policy pinned to one server-generated opaque key, exact content type, and exact byte size. The browser posts the file directly to object storage without an API bearer token, then calls the authenticated completion route. Completion performs a server-side `HEAD`, compares stored metadata to the authorization, deletes mismatches, and moves a valid source only to `uploaded`/`preview`. It does not mark content ready or public. See [PRIVATE_UPLOADS.md](PRIVATE_UPLOADS.md).
 
 The visibility route rejects an attempt to make any source public until a future ingestion worker has placed it in `ready` state.
+
+Transcript upload accepts only `{ "format": "text/vtt", "content": "..." }`. The shared deterministic parser enforces a 2 MB content limit, at most 10,000 chronological cues, a maximum four-hour duration, and timestamps no more than five seconds beyond the inspected video. Draft replacement increments a version and forces the source back to `processing`/preview. `PATCH` accepts only `approved` or `rejected`; approval makes the source `ready` but still preview-only until the creator separately changes visibility. No transcript route calls an AI provider.
 
 ## Configure Auth0
 
@@ -65,7 +70,7 @@ npm run scan:once
 npm run cleanup:once
 ```
 
-Both one-shot commands use server-only configuration, print only opaque job metadata plus `aiCalls: 0`, and exit after one source or an idle result. `scan:once` requires migrations through 009, private storage, and `MALWARE_SCANNER_HOST`; it fails closed when ClamAV is unavailable. `cleanup:once` requires migration 006 and reconciles physical deletion for already tombstoned sources. Run them from a controlled scheduler. Neither invokes an AI provider.
+Both one-shot commands use server-only configuration, print only opaque job metadata plus `aiCalls: 0`, and exit after one source or an idle result. Apply migrations through 010 for the current API. `scan:once` requires private storage and `MALWARE_SCANNER_HOST`; it fails closed when ClamAV is unavailable. `cleanup:once` reconciles physical deletion for already tombstoned sources. Run them from a controlled scheduler. Neither invokes an AI provider.
 
 The API listens on `http://127.0.0.1:4320`. Set `VITE_CREATOR_API_URL=http://127.0.0.1:4320` in the simulator's `.env.local`, restart the simulator, and complete Auth0 login.
 
@@ -78,9 +83,9 @@ The identity and workspace tables store:
 - Creation and last-seen timestamps
 - A deletion timestamp when access is revoked
 - Agent name, description, draft/publication state, and immutable configuration versions
-- Source title, media type, processing status, private/public/disabled visibility, opaque storage key, expected content type/size, upload-policy expiry, bounded scan state, detected duration/video/audio codecs, malware verdict/scanner/time, and storage-deletion completion/lease/attempt state
+- Source title, media type, processing status, private/public/disabled visibility, opaque storage key, expected content type/size, upload-policy expiry, bounded scan state, detected duration/video/audio codecs, malware verdict/scanner/time, creator-provided WebVTT/version/review metadata, and storage-deletion completion/lease/attempt state
 
-PostgreSQL does not store access tokens, passwords, email addresses, display names, profile images, uploaded bytes, transcripts, extracted text, storage credentials, or AI-provider credentials. Uploaded bytes live only in the configured private object store. A unique `(auth_issuer, auth_subject)` constraint provides stable mapping under concurrent logins. A deleted identity is not automatically reactivated.
+PostgreSQL does not store access tokens, passwords, email addresses, display names, profile images, uploaded video bytes, storage credentials, or AI-provider credentials. Creator-provided WebVTT is stored in the owner-scoped transcript table for review and must use encrypted database storage in production; it is never copied into audit events or logs. Source deletion overwrites its transcript content and timing metadata before marking the row deleted. Uploaded video bytes live only in the configured private object store. A unique `(auth_issuer, auth_subject)` constraint provides stable mapping under concurrent logins. A deleted identity is not automatically reactivated.
 
 Ingestion lifecycle changes also append immutable `audit_events` rows containing only actor class/opaque creator ID, action, source UUID, bounded state metadata, and timestamp. Filenames, titles, Auth0 subjects, storage keys, signed URLs, transcripts, and bytes are forbidden by the writer contract and regression tests. PostgreSQL triggers reject application-level `UPDATE` and `DELETE` against these events. Retention/export policy and broader agent/publishing coverage remain future work.
 

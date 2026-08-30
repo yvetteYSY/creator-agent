@@ -18,10 +18,10 @@ The default simulator is intentionally deterministic and local. **It makes no AI
 | Owner-scoped workspace API | Authenticated routes create, list, read, and version agents plus private-by-default source metadata. Every database path includes the verified internal owner ID. |
 | Durable studio synchronization | Auth0 mode loads or bootstraps the creator's agent, restores customization, and persists configuration plus new source metadata updates. Local mode remains network-free. |
 | Creator studio | A seeded creator can manage an agent and its knowledge sources in a responsive web interface. |
-| Text ingestion | Document or audio-transcript text can be pasted, chunked, and indexed in browser memory. Local video can also use a creator-provided WebVTT sidecar to create timestamped chunks without an AI call. |
+| Text ingestion | Document or audio-transcript text can be pasted, chunked, and indexed in browser memory. Local video can use a creator-provided WebVTT sidecar immediately; the managed API can durably store and version a validated WebVTT draft after quarantine scanning without an AI call. |
 | Private MP4 upload | In managed Auth0 mode, an MP4 up to 250 MB uploads directly to private S3-compatible storage through a 10-minute, exact-key/type/size policy. The Auth0 token is sent only to the API, never to storage. Local mode still stages the file without a network request. |
 | Quarantine scan boundary | A zero-AI one-shot worker safely claims uploaded sources with PostgreSQL leases, validates bounded MP4 metadata, then streams the exact full object in 1 MB chunks to a private ClamAV daemon. Only a clean verdict persists duration/codecs plus malware status and moves the source to **Awaiting transcription**. Invalid or infected files are deleted and disabled; scanner outages stay quarantined for bounded retry. |
-| Honest video status | A video without captions remains **Awaiting transcription**, and a durable upload stops at **Uploaded**. In local mode only, a valid creator-provided WebVTT sidecar makes timestamped caption chunks ready for preview or explicit public approval. |
+| Honest video status | A video without captions remains **Awaiting transcription**, and a durable upload stops at **Uploaded**. Local mode can build timestamped chunks immediately. The managed API requires a clean quarantine verdict and explicit transcript approval before moving the source to `ready`; replacement revokes public visibility. |
 | Source privacy | Sources are preview-only by default and require explicit approval for public answers. Processing, disabled, preview-only, and deleted sources are excluded from public retrieval. |
 | Grounded chat | A deterministic local retrieval engine answers from approved text and returns source citations or says that it lacks enough information. |
 | Multi-user conversations | Maya, Theo, and Jules have isolated histories; one audience member cannot read another's conversation. |
@@ -41,7 +41,7 @@ The default simulator is intentionally deterministic and local. **It makes no AI
 - Default local-simulator state is held in memory and resets on refresh; configured Auth0 mode persists the creator workspace through the API.
 - The interface is a mobile-responsive web simulator, not yet an Expo/React Native app.
 - The protected API persists creator identity, agents, versioned configuration, source privacy metadata, and private-upload lifecycle metadata. Auth0 mode can upload MP4 bytes when S3-compatible storage is explicitly configured; local mode and pasted text remain browser-only.
-- Uploaded video is not scanned by the API request process. The opt-in one-shot worker requires private ClamAV configuration, performs bounded MP4 brand/movie-header/track inspection, and streams the exact full object for a malware verdict. Checksum verification, sandboxed full decoding, automatic transcription, and embedding are not implemented. A local video becomes available to deterministic retrieval only when its creator supplies a valid WebVTT sidecar; that transcript is not yet persisted in managed mode.
+- Uploaded video is not scanned by the API request process. The opt-in one-shot worker requires private ClamAV configuration, performs bounded MP4 brand/movie-header/track inspection, and streams the exact full object for a malware verdict. Checksum verification, sandboxed full decoding, automatic transcription, managed transcript-review UI, and embedding are not implemented. The managed API now persists creator-provided WebVTT drafts separately and requires explicit approval, but durable transcript cues are not yet connected to retrieval.
 - Pasted text uses deterministic term matching rather than model-based embeddings or generation.
 - A real user-owned endpoint may create costs for its owner; Creator Agent never silently uses a platform or developer AI key.
 
@@ -78,7 +78,7 @@ npm run cleanup:once # Reconcile at most one tombstoned stored object; requires 
 5. Open **Load lab** and change traffic, concurrency, and queue limits.
 6. Observe bounded rejection when a popular agent exceeds safe capacity.
 
-In default local mode, simulator state resets on refresh and pasted content, selected video bytes, and WebVTT captions never leave the browser. A valid sidecar creates timestamped local knowledge immediately without calling an AI provider. In configured Auth0 mode, agent/source metadata persists and MP4 bytes upload directly to private object storage; the browser never receives storage credentials and never sends its Auth0 bearer token to storage. Managed video stays unavailable to retrieval until the separately scheduled quarantine scan and future transcription/review stages complete. See [local WebVTT ingestion](docs/LOCAL_VIDEO_TRANSCRIPTS.md) and [private video uploads](docs/PRIVATE_UPLOADS.md).
+In default local mode, simulator state resets on refresh and pasted content, selected video bytes, and WebVTT captions never leave the browser. A valid sidecar creates timestamped local knowledge immediately without calling an AI provider. In configured Auth0 mode, agent/source metadata persists and MP4 bytes upload directly to private object storage; the browser never receives storage credentials and never sends its Auth0 bearer token to storage. Managed video stays unavailable to retrieval until the separately scheduled quarantine scan and explicit transcript approval complete; the managed review UI and durable cue retrieval are still pending. See [local WebVTT ingestion](docs/LOCAL_VIDEO_TRANSCRIPTS.md) and [private video uploads](docs/PRIVATE_UPLOADS.md).
 
 ### Zero-cost end-to-end routing
 
@@ -104,7 +104,7 @@ To connect a real user-owned agent, replace the local URL with an HTTPS endpoint
 - Upload retries, resumable/multipart upload, audit retention/export controls, and retention-policy verification
 - Full sample-table/media decoding validation, checksum verification, parser sandboxing, and continuous scan scheduling
 - PDF, Markdown, and plain-text file extraction
-- Automatic audio/video transcription and durable transcript review/persistence
+- Automatic audio/video transcription and managed transcript-review UI
 - Embeddings, vector retrieval, model generation, and streaming responses
 - Native Expo/React Native application
 - Broader agent/publishing audit events, rate limits, moderation, and account-deletion jobs
@@ -129,7 +129,7 @@ Keep the current deterministic simulator as a zero-cost product demo and regress
 2. **Available:** upload directly to private object storage without proxying large video bytes or forwarding the Auth0 token.
 3. **Available for scheduled scans:** pin declared MIME type and exact byte size, inspect a supported ISO BMFF brand, movie duration, H.264 video track, and AAC audio track, then stream the exact object to private ClamAV in bounded chunks. Full decoding and checksum verification remain next.
 4. **Partially available:** lease-based, concurrency-safe one-shot worker with `uploaded → scanning → processing/failed`; continuous scheduling and `transcribing → ready` remain next.
-5. **Available in local simulation:** accept a creator-provided WebVTT sidecar and build timestamped deterministic chunks without an AI call. Next, route automatic transcription to either a self-hosted worker or a creator-owned endpoint and record the selected processor and usage without logging content.
+5. **Available:** local simulation builds timestamped chunks immediately; the managed API separately stores/version creator-provided WebVTT only after clean quarantine scanning and requires explicit approval. Next, connect approved durable cues to retrieval and later route automatic transcription to a self-hosted or creator-owned endpoint.
 6. Let the creator review the timestamped transcript before approving it for public answers.
 
 **Exit test:** an uploaded video becomes a reviewable, timestamped source; failed, unapproved, or deleted content never appears in chat.
@@ -214,7 +214,7 @@ creator-agent/
 └── README.md
 ```
 
-The next production increment is durable creator-provided WebVTT storage and review state, alongside checksum/full-decoder hardening before any automatic transcription route can see the upload. The actual mobile and transcription-worker packages still wait on provider, hosting, privacy, and beta-cohort decisions. The deterministic core remains useful for product demos and fast policy regression tests.
+The next production increment is tenant-filtered deterministic retrieval from approved durable transcript cues, alongside checksum/full-decoder hardening before any automatic transcription route can see the upload. The actual mobile and transcription-worker packages still wait on provider, hosting, privacy, and beta-cohort decisions. The deterministic core remains useful for product demos and fast policy regression tests.
 
 ## Delivery milestones
 
@@ -231,6 +231,7 @@ The next production increment is durable creator-provided WebVTT storage and rev
 - **Available:** local video staging plus configured private direct MP4 upload with exact-size/type enforcement and safe non-ready state
 - **Available:** bounded MP4 brand, duration, H.264/AAC track validation with detected metadata persistence and invalid-object deletion
 - **Available:** private ClamAV `INSTREAM` adapter, bounded full-object streaming, persisted clean/infected status, fail-closed retry behavior, and a free deterministic protocol suite
+- **Available:** owner-scoped, versioned WebVTT draft/read/approve/reject API with timestamp validation, approval-gated readiness, content-free audit, and immediate caption erasure on source deletion
 - **Available:** tombstone-first object deletion with lease-based retry reconciliation
 - **Next:** sandboxed full decoding/checksum, durable creator-provided transcripts and review, real transcription, upload retry, and audit retention/export controls
 

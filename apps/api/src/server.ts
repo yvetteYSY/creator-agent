@@ -6,6 +6,7 @@ import { PostgresCreatorRepository } from "./creator-store";
 import { handleApiRequest } from "./handler";
 import { PostgresWorkspaceRepository } from "./workspace-store";
 import { createObjectStorage, loadObjectStorageConfiguration } from "./object-storage";
+import { PostgresTranscriptRepository } from "./transcript-store";
 
 const configuration = loadApiConfiguration(process.env);
 const pool = new Pool({ connectionString: configuration.databaseUrl });
@@ -14,6 +15,7 @@ const dependencies = {
   creators: new PostgresCreatorRepository(pool),
   workspace: new PostgresWorkspaceRepository(pool),
   storage: createObjectStorage(loadObjectStorageConfiguration(process.env)),
+  transcripts: new PostgresTranscriptRepository(pool),
 };
 
 class HttpRequestError extends Error {
@@ -22,13 +24,13 @@ class HttpRequestError extends Error {
   }
 }
 
-async function readJsonBody(request: import("node:http").IncomingMessage) {
+async function readJsonBody(request: import("node:http").IncomingMessage, maximumBytes = 64 * 1024) {
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of request) {
     const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     size += buffer.length;
-    if (size > 64 * 1024) throw new HttpRequestError("Request body exceeds 64 KB.", 413);
+    if (size > maximumBytes) throw new HttpRequestError("Request body exceeds the route limit.", 413);
     chunks.push(buffer);
   }
   if (size === 0) return undefined;
@@ -50,6 +52,7 @@ function sendJson(response: ServerResponse, status: number, body: unknown, origi
 }
 
 const server = createServer(async (request, response) => {
+  const requestPath = new URL(request.url ?? "/", "http://api.local").pathname;
   const origin = request.headers.origin;
   if (origin && origin !== configuration.allowedOrigin) {
     sendJson(response, 403, { error: "Origin is not allowed." });
@@ -58,7 +61,7 @@ const server = createServer(async (request, response) => {
   if (request.method === "OPTIONS") {
     response.writeHead(204, {
       "access-control-allow-origin": configuration.allowedOrigin,
-      "access-control-allow-methods": "GET, POST, PATCH, DELETE, OPTIONS",
+      "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
       "access-control-allow-headers": "authorization, content-type",
       "access-control-max-age": "600",
       vary: "origin",
@@ -69,10 +72,13 @@ const server = createServer(async (request, response) => {
   try {
     const result = await handleApiRequest({
       method: request.method ?? "GET",
-      path: new URL(request.url ?? "/", "http://api.local").pathname,
+      path: requestPath,
       authorization: request.headers.authorization,
-      body: request.method === "POST" || request.method === "PATCH"
-        ? await readJsonBody(request)
+      body: request.method === "POST" || request.method === "PUT" || request.method === "PATCH"
+        ? await readJsonBody(
+          request,
+          request.method === "PUT" && requestPath.endsWith("/transcript") ? 4 * 1024 * 1024 : undefined,
+        )
         : undefined,
     }, dependencies);
     sendJson(response, result.status, result.body, origin);

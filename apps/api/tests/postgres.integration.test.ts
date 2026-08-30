@@ -4,10 +4,10 @@ import { Pool } from "pg";
 import { PostgresCreatorRepository } from "../src/creator-store";
 import { PostgresStorageDeletionRepository } from "../src/cleanup-store";
 import { PostgresScanRepository } from "../src/scanner-store";
+import { PostgresTranscriptRepository } from "../src/transcript-store";
 import {
   PostgresWorkspaceRepository,
   WorkspaceRecordNotFoundError,
-  WorkspaceStateConflictError,
 } from "../src/workspace-store";
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
@@ -26,6 +26,7 @@ suite("PostgreSQL creator workspace integration", () => {
       "007_ingestion_audit_events.sql",
       "008_media_inspection.sql",
       "009_malware_scanning.sql",
+      "010_creator_transcripts.sql",
     ]) {
       const sql = await readFile(new URL(`../migrations/${migration}`, import.meta.url), "utf8");
       await pool!.query(sql);
@@ -138,8 +139,26 @@ suite("PostgreSQL creator workspace integration", () => {
     expect(inspected.rows[0].malware_scanned_at).toBeInstanceOf(Date);
     expect(await workspace.listSources(ownerA.id, agent.id))
       .toContainEqual(expect.objectContaining({ id: source.id, status: "processing", visibility: "preview" }));
+    const transcripts = new PostgresTranscriptRepository(pool!);
+    const webvtt = "WEBVTT\n\n00:00.000 --> 00:02.000\nFirst private caption.";
+    await expect(transcripts.saveDraft(ownerA.id, agent.id, source.id, webvtt))
+      .resolves.toMatchObject({ status: "draft", version: 1, cueCount: 1, durationMs: 2_000 });
+    await expect(transcripts.get(ownerB.id, agent.id, source.id))
+      .rejects.toThrowError(WorkspaceRecordNotFoundError);
+    await expect(transcripts.review(ownerA.id, agent.id, source.id, "approved"))
+      .resolves.toMatchObject({ status: "approved", version: 1 });
     await expect(workspace.updateSourceVisibility(ownerA.id, agent.id, source.id, "public"))
-      .rejects.toThrowError(WorkspaceStateConflictError);
+      .resolves.toMatchObject({ status: "ready", visibility: "public" });
+    await expect(transcripts.saveDraft(
+      ownerA.id,
+      agent.id,
+      source.id,
+      "WEBVTT\n\n00:01.000 --> 00:03.000\nReplacement private caption.",
+    )).resolves.toMatchObject({ status: "draft", version: 2 });
+    expect(await workspace.listSources(ownerA.id, agent.id))
+      .toContainEqual(expect.objectContaining({ id: source.id, status: "processing", visibility: "preview" }));
+    await expect(transcripts.review(ownerA.id, agent.id, source.id, "rejected"))
+      .resolves.toMatchObject({ status: "rejected", version: 2 });
     await expect(workspace.updateSourceVisibility(ownerB.id, agent.id, source.id, "disabled"))
       .rejects.toThrowError(WorkspaceRecordNotFoundError);
     await expect(workspace.deleteSource(ownerA.id, agent.id, source.id))
@@ -163,6 +182,12 @@ suite("PostgreSQL creator workspace integration", () => {
       leaseId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
     })).resolves.toBe(false);
     await expect(cleanup.complete(deletionJob!)).resolves.toBe(true);
+    const deletedTranscript = await pool!.query(
+      "SELECT webvtt, cue_count, duration_ms, deleted_at FROM source_transcripts WHERE source_id = $1",
+      [source.id],
+    );
+    expect(deletedTranscript.rows[0]).toMatchObject({ webvtt: "", cue_count: 0, duration_ms: "0" });
+    expect(deletedTranscript.rows[0].deleted_at).toBeInstanceOf(Date);
 
     const scanningSource = await workspace.createSource(ownerA.id, agent.id, {
       title: "Delete during scan",
@@ -209,6 +234,9 @@ suite("PostgreSQL creator workspace integration", () => {
       "source.upload_completed",
       "source.scan_claimed",
       "source.scan_passed",
+      "source.transcript_saved",
+      "source.transcript_approved",
+      "source.transcript_rejected",
       "source.deleted",
       "source.storage_deletion_claimed",
       "source.storage_deletion_completed",
@@ -222,6 +250,8 @@ suite("PostgreSQL creator workspace integration", () => {
     expect(serializedAudit).not.toContain("delete-during-scan");
     expect(serializedAudit).not.toContain("private-uploads/");
     expect(serializedAudit).not.toContain("auth0|postgres-a");
+    expect(serializedAudit).not.toContain("First private caption");
+    expect(serializedAudit).not.toContain("Replacement private caption");
     await expect(pool!.query("UPDATE audit_events SET action = 'tampered'"))
       .rejects.toThrowError(/immutable/i);
     await expect(pool!.query("DELETE FROM audit_events"))

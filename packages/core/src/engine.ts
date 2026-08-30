@@ -13,6 +13,7 @@ import type {
   ResponseLength,
   StylePreset,
 } from "./types";
+import { parseWebVtt } from "./webvtt";
 
 const STOP_WORDS = new Set([
   "a",
@@ -79,81 +80,6 @@ function createChunks(sourceId: string, content: string): Chunk[] {
     text,
     location: `Section ${index + 1}`,
   }));
-}
-
-const MAX_WEBVTT_BYTES = 2_000_000;
-const MAX_WEBVTT_CUES = 10_000;
-
-interface WebVttCue {
-  startMs: number;
-  endMs: number;
-  text: string;
-}
-
-function parseWebVttTimestamp(value: string): number | null {
-  const match = value.match(/^(?:(\d+):)?([0-5]\d):([0-5]\d)\.(\d{3})$/);
-  if (!match) return null;
-  const [, rawHours, rawMinutes, rawSeconds, rawMilliseconds] = match;
-  const hours = Number(rawHours ?? 0);
-  const minutes = Number(rawMinutes);
-  const seconds = Number(rawSeconds);
-  const milliseconds = Number(rawMilliseconds);
-  const result = (((hours * 60) + minutes) * 60 + seconds) * 1_000 + milliseconds;
-  return Number.isSafeInteger(result) ? result : null;
-}
-
-function decodeWebVttText(value: string): string {
-  return value
-    .replace(/<[^>]*>/g, "")
-    .replace(/&nbsp;/g, " ")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&amp;/g, "&")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function parseWebVtt(transcript: string): WebVttCue[] {
-  if (new TextEncoder().encode(transcript).byteLength > MAX_WEBVTT_BYTES) {
-    throw new CreatorAgentError("INVALID_INPUT", "WebVTT transcripts must be 2 MB or smaller.");
-  }
-  const normalized = transcript.replace(/^\uFEFF/, "").replace(/\r\n?/g, "\n");
-  const firstLine = normalized.split("\n", 1)[0]?.trim() ?? "";
-  if (firstLine !== "WEBVTT" && !firstLine.startsWith("WEBVTT ")) {
-    throw new CreatorAgentError("INVALID_INPUT", "Choose a valid WebVTT transcript.");
-  }
-
-  const cues: WebVttCue[] = [];
-  const blocks = normalized.split(/\n{2,}/).slice(1);
-  let previousStart = -1;
-  for (const block of blocks) {
-    const lines = block.split("\n").map((line) => line.trim()).filter(Boolean);
-    if (lines.length === 0 || /^(NOTE|STYLE|REGION)(?:\s|$)/.test(lines[0])) continue;
-    const timingIndex = lines[0].includes("-->") ? 0 : 1;
-    const timing = lines[timingIndex];
-    if (!timing?.includes("-->")) continue;
-    const [rawStart, rawEndWithSettings] = timing.split("-->", 2).map((value) => value.trim());
-    const rawEnd = rawEndWithSettings?.split(/\s+/, 1)[0] ?? "";
-    const startMs = parseWebVttTimestamp(rawStart);
-    const endMs = parseWebVttTimestamp(rawEnd);
-    if (startMs === null || endMs === null || endMs <= startMs) {
-      throw new CreatorAgentError("INVALID_INPUT", "WebVTT contains an invalid timestamp range.");
-    }
-    if (startMs < previousStart) {
-      throw new CreatorAgentError("INVALID_INPUT", "WebVTT caption cues must be chronological.");
-    }
-    const text = decodeWebVttText(lines.slice(timingIndex + 1).join(" "));
-    if (!text) continue;
-    cues.push({ startMs, endMs, text });
-    previousStart = startMs;
-    if (cues.length > MAX_WEBVTT_CUES) {
-      throw new CreatorAgentError("INVALID_INPUT", "WebVTT transcripts may contain at most 10,000 caption cues.");
-    }
-  }
-  if (cues.length === 0) {
-    throw new CreatorAgentError("INVALID_INPUT", "WebVTT must contain at least one caption cue.");
-  }
-  return cues;
 }
 
 function timestampLabel(milliseconds: number): string {
@@ -337,7 +263,15 @@ export class CreatorAgentEngine {
     visibility: SourceVisibility;
     transcript: string;
   }): Source {
-    const cues = parseWebVtt(input.transcript);
+    let cues;
+    try {
+      cues = parseWebVtt(input.transcript).cues;
+    } catch (error) {
+      throw new CreatorAgentError(
+        "INVALID_INPUT",
+        error instanceof Error ? error.message : "Choose a valid WebVTT transcript.",
+      );
+    }
     const staged = this.stageVideoSource(input);
     const source = this.requireSource(staged.id);
     source.status = "ready";

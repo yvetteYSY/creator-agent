@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { WebVttValidationError } from "@creator-agent/core";
 import {
   AuthenticationError,
   readBearerToken,
@@ -22,6 +23,7 @@ import {
   StoredObjectNotFoundError,
   type ObjectStorage,
 } from "./object-storage";
+import type { TranscriptRecord, TranscriptRepository } from "./transcript-store";
 
 export interface ApiRequest {
   method: string;
@@ -40,6 +42,7 @@ export interface ApiDependencies {
   creators: CreatorRepository;
   workspace: WorkspaceRepository;
   storage?: ObjectStorage;
+  transcripts?: TranscriptRepository;
 }
 
 class RequestValidationError extends Error {}
@@ -50,6 +53,7 @@ const SOURCE_COLLECTION_PATTERN = /^\/v1\/agents\/([^/]+)\/sources$/;
 const SOURCE_ITEM_PATTERN = /^\/v1\/agents\/([^/]+)\/sources\/([^/]+)$/;
 const SOURCE_UPLOAD_PATTERN = /^\/v1\/agents\/([^/]+)\/sources\/uploads$/;
 const SOURCE_COMPLETE_PATTERN = /^\/v1\/agents\/([^/]+)\/sources\/([^/]+)\/complete$/;
+const SOURCE_TRANSCRIPT_PATTERN = /^\/v1\/agents\/([^/]+)\/sources\/([^/]+)\/transcript$/;
 
 export async function handleApiRequest(
   request: ApiRequest,
@@ -74,6 +78,40 @@ export async function handleApiRequest(
       const creator = await authorize(request, dependencies, "write:agent");
       const agent = await dependencies.workspace.createAgent(creator.id, parseCreateAgent(request.body));
       return { status: 201, body: { agent: publicAgent(agent) } };
+    }
+
+    const sourceTranscript = SOURCE_TRANSCRIPT_PATTERN.exec(request.path);
+    if (sourceTranscript && ["GET", "PUT", "PATCH"].includes(request.method)) {
+      const creator = await authorize(
+        request,
+        dependencies,
+        request.method === "GET" ? "read:creator" : "write:agent",
+      );
+      const agentId = resourceId(sourceTranscript[1], "agent ID");
+      const sourceId = resourceId(sourceTranscript[2], "source ID");
+      const transcripts = availableTranscripts(dependencies.transcripts);
+      if (request.method === "GET") {
+        const transcript = await transcripts.get(creator.id, agentId, sourceId);
+        return { status: 200, body: { transcript: publicTranscript(transcript) } };
+      }
+      if (request.method === "PUT") {
+        const transcript = await transcripts.saveDraft(
+          creator.id,
+          agentId,
+          sourceId,
+          parseTranscriptUpload(request.body),
+        );
+        return { status: 200, body: { transcript: publicTranscript(transcript) } };
+      }
+      if (request.method === "PATCH") {
+        const transcript = await transcripts.review(
+          creator.id,
+          agentId,
+          sourceId,
+          parseTranscriptReview(request.body),
+        );
+        return { status: 200, body: { transcript: publicTranscript(transcript) } };
+      }
     }
 
     const sourceComplete = SOURCE_COMPLETE_PATTERN.exec(request.path);
@@ -215,6 +253,9 @@ export async function handleApiRequest(
       return { status: 403, body: { error: "Forbidden." } };
     }
     if (error instanceof RequestValidationError) {
+      return { status: 400, body: { error: error.message } };
+    }
+    if (error instanceof WebVttValidationError) {
       return { status: 400, body: { error: error.message } };
     }
     if (error instanceof WorkspaceRecordNotFoundError) {
@@ -403,9 +444,31 @@ function parseVideoUpload(body: unknown) {
   return { title, contentType: input.contentType, size: input.size };
 }
 
+function parseTranscriptUpload(body: unknown) {
+  const input = objectBody(body);
+  rejectUnknown(input, ["format", "content"]);
+  if (input.format !== "text/vtt") throw new RequestValidationError("format must be text/vtt.");
+  if (typeof input.content !== "string") throw new RequestValidationError("content must be a string.");
+  return input.content;
+}
+
+function parseTranscriptReview(body: unknown) {
+  const input = objectBody(body);
+  rejectUnknown(input, ["status"]);
+  if (input.status !== "approved" && input.status !== "rejected") {
+    throw new RequestValidationError("status must be approved or rejected.");
+  }
+  return input.status;
+}
+
 function availableStorage(storage?: ObjectStorage) {
   if (!storage?.isAvailable) throw new ObjectStorageUnavailableError("Private object storage is not configured.");
   return storage;
+}
+
+function availableTranscripts(transcripts?: TranscriptRepository) {
+  if (!transcripts) throw new Error("Transcript storage is not configured.");
+  return transcripts;
 }
 
 function resourceId(value: string | undefined, label: string) {
@@ -425,4 +488,8 @@ function publicAgent(agent: AgentRecord) {
 function publicSource(source: SourceRecord) {
   const { ownerId: _ownerId, ...safe } = source;
   return safe;
+}
+
+function publicTranscript(transcript: TranscriptRecord) {
+  return transcript;
 }

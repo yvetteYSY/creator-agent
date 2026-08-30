@@ -217,7 +217,7 @@ Autoscaling signals should include active streams, requests per second, model co
 2. Client uploads directly to private object storage without proxying bytes through the API. **Implemented for MP4 in managed mode.**
 3. API verifies completion, stored type/size, and ownership, then enqueues ingestion. **Metadata verification is implemented; queueing is not.**
 4. Worker scans and normalizes the file. **A concurrency-safe one-shot worker performs bounded MP4 brand, movie-duration, H.264 video-track, and AAC audio-track inspection, then streams the exact full object in 1 MB chunks to a private ClamAV endpoint.**
-5. Text documents are parsed; audio/video is transcribed into timestamped segments.
+5. Text documents are parsed; audio/video is transcribed into timestamped segments. **Creator-provided WebVTT can now be stored as an owner-scoped draft after clean scanning and explicitly approved or rejected; automatic transcription and durable retrieval chunks remain pending.**
 6. Extracted text is normalized while preserving headings, pages, speakers, and time ranges.
 7. Content is split into overlapping semantic chunks.
 8. Embeddings are generated in batches and stored with metadata in PostgreSQL/pgvector.

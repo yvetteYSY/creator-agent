@@ -11,6 +11,7 @@ import {
 import { loadApiConfiguration } from "../src/config";
 import { PostgresCreatorRepository, type CreatorRecord, type CreatorRepository } from "../src/creator-store";
 import { handleApiRequest } from "../src/handler";
+import type { TranscriptRecord, TranscriptRepository } from "../src/transcript-store";
 import type { WorkspaceRepository } from "../src/workspace-store";
 
 const unusedWorkspace = {} as WorkspaceRepository;
@@ -219,4 +220,84 @@ describe("protected creator API", () => {
       body: { ok: true, service: "creator-agent-api", aiCalls: 0 },
     });
   });
+
+  it("requires creator scope for transcript draft, review, and read routes", async () => {
+    const sourceId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    const agentId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const transcripts = new MemoryTranscriptRepository();
+    const creators = new MemoryCreatorRepository();
+    const writePrincipal = { ...principal, scopes: new Set(["read:creator", "write:agent"]) };
+    const dependencies = {
+      verifier: verifierFor(writePrincipal),
+      creators,
+      workspace: unusedWorkspace,
+      transcripts,
+    };
+    const content = "WEBVTT\n\n00:00.000 --> 00:02.000\nKeep uploaded data private.";
+    const saved = await handleApiRequest({
+      method: "PUT",
+      path: `/v1/agents/${agentId}/sources/${sourceId}/transcript`,
+      authorization: "Bearer valid-token",
+      body: { format: "text/vtt", content },
+    }, dependencies);
+    expect(saved).toMatchObject({ status: 200, body: { transcript: { status: "draft", content } } });
+    const approved = await handleApiRequest({
+      method: "PATCH",
+      path: `/v1/agents/${agentId}/sources/${sourceId}/transcript`,
+      authorization: "Bearer valid-token",
+      body: { status: "approved" },
+    }, dependencies);
+    expect(approved).toMatchObject({ status: 200, body: { transcript: { status: "approved" } } });
+    await expect(handleApiRequest({
+      method: "GET",
+      path: `/v1/agents/${agentId}/sources/${sourceId}/transcript`,
+      authorization: "Bearer valid-token",
+    }, dependencies)).resolves.toMatchObject({ status: 200, body: { transcript: { content } } });
+    expect(transcripts.lastScope).toEqual({ ownerId: "creator-1", agentId, sourceId });
+
+    const forbidden = await handleApiRequest({
+      method: "PUT",
+      path: `/v1/agents/${agentId}/sources/${sourceId}/transcript`,
+      authorization: "Bearer read-only-token",
+      body: { format: "text/vtt", content },
+    }, { ...dependencies, verifier: verifierFor(principal) });
+    expect(forbidden.status).toBe(403);
+  });
 });
+
+class MemoryTranscriptRepository implements TranscriptRepository {
+  record?: TranscriptRecord;
+  lastScope?: { ownerId: string; agentId: string; sourceId: string };
+
+  async get(ownerId: string, agentId: string, sourceId: string) {
+    this.scope(ownerId, agentId, sourceId);
+    if (!this.record) throw new Error("missing test transcript");
+    return this.record;
+  }
+
+  async saveDraft(ownerId: string, agentId: string, sourceId: string, content: string) {
+    this.scope(ownerId, agentId, sourceId);
+    this.record = {
+      sourceId,
+      version: 1,
+      status: "draft",
+      format: "text/vtt",
+      content,
+      cueCount: 1,
+      durationMs: 2_000,
+      createdAt: "2026-08-29T00:00:00.000Z",
+      updatedAt: "2026-08-29T00:00:00.000Z",
+    };
+    return this.record;
+  }
+
+  async review(ownerId: string, agentId: string, sourceId: string, status: "approved" | "rejected") {
+    const current = await this.get(ownerId, agentId, sourceId);
+    this.record = { ...current, status, updatedAt: "2026-08-29T00:00:01.000Z" };
+    return this.record;
+  }
+
+  private scope(ownerId: string, agentId: string, sourceId: string) {
+    this.lastScope = { ownerId, agentId, sourceId };
+  }
+}
