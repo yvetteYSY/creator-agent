@@ -1,4 +1,5 @@
 import type { ObjectStorage } from "./object-storage";
+import type { MalwareScanner } from "./malware-scanner";
 import type { ScanJob, ScanRepository } from "./scanner-store";
 
 const INSPECTION_WINDOW_BYTES = 512 * 1024;
@@ -6,6 +7,7 @@ const MAX_ATTEMPTS = 3;
 const STALE_LEASE_MILLISECONDS = 15 * 60 * 1000;
 const MIN_DURATION_MS = 1_000;
 const MAX_DURATION_MS = 4 * 60 * 60 * 1_000;
+const MALWARE_STREAM_CHUNK_BYTES = 1024 * 1024;
 const MP4_BRANDS = new Set([
   "avc1", "dash", "iso2", "iso3", "iso4", "iso5", "iso6", "isom",
   "M4V ", "mp41", "mp42", "MSNV",
@@ -22,6 +24,7 @@ export type ScanRunResult =
     durationMs: number;
     videoCodec: string;
     audioCodec: string;
+    malwareStatus: "clean";
   }
   | { outcome: "failed"; sourceId: string; failureCode: string };
 
@@ -122,6 +125,7 @@ export function inspectMp4(
 export async function runScanOnce(input: {
   repository: ScanRepository;
   storage: ObjectStorage;
+  malwareScanner: MalwareScanner;
   now?: Date;
 }): Promise<ScanRunResult> {
   const now = input.now ?? new Date();
@@ -144,7 +148,7 @@ export async function runScanOnce(input: {
       );
     }
   } catch (error) {
-    await finishReadFailure(input.repository, job);
+    await finishTransientFailure(input.repository, job, "scan_storage_error");
     throw error;
   }
   const inspection = inspectMp4(head, tail, job.expectedSize);
@@ -152,7 +156,7 @@ export async function runScanOnce(input: {
     try {
       await input.storage.deleteObject(job.storageKey);
     } catch (error) {
-      await finishReadFailure(input.repository, job);
+      await finishTransientFailure(input.repository, job, "scan_storage_error");
       throw error;
     }
     const failureCode = inspection.failureCode;
@@ -160,12 +164,36 @@ export async function runScanOnce(input: {
     return { outcome: "failed", sourceId: job.sourceId, failureCode };
   }
 
+  let malwareVerdict;
+  try {
+    malwareVerdict = await input.malwareScanner.scan({
+      chunks: readObjectChunks(input.storage, job),
+      expectedSize: job.expectedSize,
+    });
+  } catch (error) {
+    const failureCode = error instanceof MalwareObjectReadError
+      ? "scan_storage_error"
+      : "malware_scanner_error";
+    await finishTransientFailure(input.repository, job, failureCode);
+    throw error;
+  }
+  if (malwareVerdict.status === "infected") {
+    try {
+      await input.storage.deleteObject(job.storageKey);
+    } catch (error) {
+      await finishTransientFailure(input.repository, job, "scan_storage_error");
+      throw error;
+    }
+    await requireLease(input.repository.fail(job, "malware_detected", malwareVerdict));
+    return { outcome: "failed", sourceId: job.sourceId, failureCode: "malware_detected" };
+  }
+
   await requireLease(input.repository.complete(job, {
     mediaType: "video/mp4",
     durationMs: inspection.durationMs,
     videoCodec: inspection.videoCodec,
     audioCodec: inspection.audioCodec,
-  }));
+  }, malwareVerdict));
   return {
     outcome: "passed",
     sourceId: job.sourceId,
@@ -173,15 +201,40 @@ export async function runScanOnce(input: {
     durationMs: inspection.durationMs,
     videoCodec: inspection.videoCodec,
     audioCodec: inspection.audioCodec,
+    malwareStatus: "clean",
   };
 }
 
-async function finishReadFailure(repository: ScanRepository, job: ScanJob) {
+async function finishTransientFailure(
+  repository: ScanRepository,
+  job: ScanJob,
+  failureCode: string,
+) {
   const updated = job.attempt >= MAX_ATTEMPTS
-    ? await repository.fail(job, "scan_storage_error")
-    : await repository.release(job, "scan_storage_error");
+    ? await repository.fail(job, failureCode)
+    : await repository.release(job, failureCode);
   await requireLease(updated);
 }
+
+async function* readObjectChunks(storage: ObjectStorage, job: ScanJob) {
+  for (let offset = 0; offset < job.expectedSize; offset += MALWARE_STREAM_CHUNK_BYTES) {
+    const maximumBytes = Math.min(MALWARE_STREAM_CHUNK_BYTES, job.expectedSize - offset);
+    let chunk: Uint8Array;
+    try {
+      chunk = await storage.readObjectRange(job.storageKey, offset, maximumBytes);
+    } catch (error) {
+      throw new MalwareObjectReadError("Unable to read the quarantined object for malware scanning.", {
+        cause: error,
+      });
+    }
+    if (chunk.byteLength !== maximumBytes) {
+      throw new MalwareObjectReadError("The quarantined object changed size during malware scanning.");
+    }
+    yield chunk;
+  }
+}
+
+class MalwareObjectReadError extends Error {}
 
 async function requireLease(result: Promise<boolean> | boolean) {
   if (!await result) throw new Error("The scan lease is no longer active.");

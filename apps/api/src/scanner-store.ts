@@ -18,10 +18,22 @@ export interface DetectedMediaMetadata {
   audioCodec: string;
 }
 
+export interface CleanMalwareScanMetadata {
+  status: "clean";
+  scanner: string;
+}
+
+export interface InfectedMalwareScanMetadata {
+  status: "infected";
+  scanner: string;
+}
+
+export type MalwareScanMetadata = CleanMalwareScanMetadata | InfectedMalwareScanMetadata;
+
 export interface ScanRepository {
   claimNext(input: { staleBefore: Date; maxAttempts: number }): Promise<ScanJob | null>;
-  complete(job: ScanJob, media: DetectedMediaMetadata): Promise<boolean>;
-  fail(job: ScanJob, failureCode: string): Promise<boolean>;
+  complete(job: ScanJob, media: DetectedMediaMetadata, malware: CleanMalwareScanMetadata): Promise<boolean>;
+  fail(job: ScanJob, failureCode: string, malware?: InfectedMalwareScanMetadata): Promise<boolean>;
   release(job: ScanJob, failureCode: string): Promise<boolean>;
 }
 
@@ -98,7 +110,7 @@ export class PostgresScanRepository implements ScanRepository {
     }
   }
 
-  async complete(job: ScanJob, media: DetectedMediaMetadata) {
+  async complete(job: ScanJob, media: DetectedMediaMetadata, malware: CleanMalwareScanMetadata) {
     return this.finish(job, {
       status: "processing",
       visibility: "preview",
@@ -106,11 +118,13 @@ export class PostgresScanRepository implements ScanRepository {
       detectedDurationMs: media.durationMs,
       detectedVideoCodec: media.videoCodec,
       detectedAudioCodec: media.audioCodec,
+      malwareStatus: malware.status,
+      malwareScanner: malware.scanner,
       failureCode: null,
     });
   }
 
-  async fail(job: ScanJob, failureCode: string) {
+  async fail(job: ScanJob, failureCode: string, malware?: InfectedMalwareScanMetadata) {
     return this.finish(job, {
       status: "failed",
       visibility: "disabled",
@@ -118,6 +132,8 @@ export class PostgresScanRepository implements ScanRepository {
       detectedDurationMs: null,
       detectedVideoCodec: null,
       detectedAudioCodec: null,
+      malwareStatus: malware?.status ?? null,
+      malwareScanner: malware?.scanner ?? null,
       failureCode,
     });
   }
@@ -130,6 +146,8 @@ export class PostgresScanRepository implements ScanRepository {
       detectedDurationMs: null,
       detectedVideoCodec: null,
       detectedAudioCodec: null,
+      malwareStatus: null,
+      malwareScanner: null,
       failureCode,
     });
   }
@@ -143,6 +161,8 @@ export class PostgresScanRepository implements ScanRepository {
       detectedDurationMs: number | null;
       detectedVideoCodec: string | null;
       detectedAudioCodec: string | null;
+      malwareStatus: "clean" | "infected" | null;
+      malwareScanner: string | null;
       failureCode: string | null;
     },
   ) {
@@ -154,8 +174,10 @@ export class PostgresScanRepository implements ScanRepository {
         `UPDATE sources
          SET status = $3, visibility = $4, detected_media_type = $5,
            detected_duration_ms = $6, detected_video_codec = $7, detected_audio_codec = $8,
-           failure_code = $9,
-           scan_completed_at = CASE WHEN $10 THEN now() ELSE scan_completed_at END,
+           malware_scan_status = $9, malware_scanner = $10,
+           malware_scanned_at = CASE WHEN $9::text IS NULL THEN NULL ELSE now() END,
+           failure_code = $11,
+           scan_completed_at = CASE WHEN $12 THEN now() ELSE scan_completed_at END,
            scan_lease_id = NULL, updated_at = now()
          WHERE id = $1 AND scan_lease_id = $2 AND status = 'scanning' AND deleted_at IS NULL
          RETURNING id`,
@@ -168,6 +190,8 @@ export class PostgresScanRepository implements ScanRepository {
           result.detectedDurationMs,
           result.detectedVideoCodec,
           result.detectedAudioCodec,
+          result.malwareStatus,
+          result.malwareScanner,
           result.failureCode,
           completed,
         ],
@@ -188,6 +212,12 @@ export class PostgresScanRepository implements ScanRepository {
               durationMs: result.detectedDurationMs,
               videoCodec: result.detectedVideoCodec,
               audioCodec: result.detectedAudioCodec,
+              malwareStatus: result.malwareStatus,
+              malwareScanner: result.malwareScanner,
+            } : {}),
+            ...(result.status === "failed" && result.malwareStatus ? {
+              malwareStatus: result.malwareStatus,
+              malwareScanner: result.malwareScanner,
             } : {}),
           },
         });

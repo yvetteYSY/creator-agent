@@ -1,7 +1,15 @@
 import { describe, expect, it } from "vitest";
+import type { MalwareScanner, MalwareScanVerdict } from "../src/malware-scanner";
 import type { ObjectStorage, StoredObjectMetadata, UploadPolicy } from "../src/object-storage";
 import { inspectMp4, runScanOnce, validateMp4Prefix } from "../src/scanner";
-import type { DetectedMediaMetadata, ScanJob, ScanRepository } from "../src/scanner-store";
+import type {
+  DetectedMediaMetadata,
+  CleanMalwareScanMetadata,
+  InfectedMalwareScanMetadata,
+  MalwareScanMetadata,
+  ScanJob,
+  ScanRepository,
+} from "../src/scanner-store";
 
 const VALID_MP4 = mp4File();
 
@@ -17,7 +25,9 @@ const JOB: ScanJob = {
 class MemoryScanRepository implements ScanRepository {
   job: ScanJob | null = JOB;
   completed?: DetectedMediaMetadata;
+  completedMalware?: MalwareScanMetadata;
   failed?: string;
+  failedMalware?: MalwareScanMetadata;
   released?: string;
 
   async claimNext() {
@@ -26,19 +36,35 @@ class MemoryScanRepository implements ScanRepository {
     return job;
   }
 
-  async complete(_job: ScanJob, media: DetectedMediaMetadata) {
+  async complete(_job: ScanJob, media: DetectedMediaMetadata, malware: CleanMalwareScanMetadata) {
     this.completed = media;
+    this.completedMalware = malware;
     return true;
   }
 
-  async fail(_job: ScanJob, failureCode: string) {
+  async fail(_job: ScanJob, failureCode: string, malware?: InfectedMalwareScanMetadata) {
     this.failed = failureCode;
+    this.failedMalware = malware;
     return true;
   }
 
   async release(_job: ScanJob, failureCode: string) {
     this.released = failureCode;
     return true;
+  }
+}
+
+class MemoryMalwareScanner implements MalwareScanner {
+  readonly isAvailable = true;
+  verdict: MalwareScanVerdict = { status: "clean", scanner: "clamav" };
+  error?: Error;
+  scannedBytes = 0;
+
+  async scan(input: { chunks: AsyncIterable<Uint8Array>; expectedSize: number }) {
+    if (this.error) throw this.error;
+    for await (const chunk of input.chunks) this.scannedBytes += chunk.byteLength;
+    expect(this.scannedBytes).toBe(input.expectedSize);
+    return this.verdict;
   }
 }
 
@@ -79,15 +105,21 @@ describe("quarantine MP4 scanner", () => {
   it("accepts bounded MP4 metadata with H.264 video and AAC audio", async () => {
     const repository = new MemoryScanRepository();
     const storage = new MemoryScanStorage();
-    await expect(runScanOnce({ repository, storage })).resolves.toEqual({
+    const malwareScanner = new MemoryMalwareScanner();
+    await expect(runScanOnce({ repository, storage, malwareScanner })).resolves.toEqual({
       outcome: "passed",
       sourceId: JOB.sourceId,
       detectedMediaType: "video/mp4",
       durationMs: 182_200,
       videoCodec: "avc1",
       audioCodec: "mp4a",
+      malwareStatus: "clean",
     });
-    expect(storage.ranges).toEqual([{ offset: 0, maximumBytes: VALID_MP4.byteLength }]);
+    expect(storage.ranges).toEqual([
+      { offset: 0, maximumBytes: VALID_MP4.byteLength },
+      { offset: 0, maximumBytes: VALID_MP4.byteLength },
+    ]);
+    expect(malwareScanner.scannedBytes).toBe(VALID_MP4.byteLength);
     expect(storage.deleted).toEqual([]);
     expect(repository.completed).toEqual({
       mediaType: "video/mp4",
@@ -95,6 +127,7 @@ describe("quarantine MP4 scanner", () => {
       videoCodec: "avc1",
       audioCodec: "mp4a",
     });
+    expect(repository.completedMalware).toEqual({ status: "clean", scanner: "clamav" });
     expect(repository.failed).toBeUndefined();
   });
 
@@ -103,7 +136,7 @@ describe("quarantine MP4 scanner", () => {
     const storage = new MemoryScanStorage();
     storage.bytes = new Uint8Array(24);
     repository.job = { ...JOB, expectedSize: storage.bytes.byteLength };
-    await expect(runScanOnce({ repository, storage })).resolves.toMatchObject({
+    await expect(runScanOnce({ repository, storage, malwareScanner: new MemoryMalwareScanner() })).resolves.toMatchObject({
       outcome: "failed",
       failureCode: "invalid_mp4_box",
     });
@@ -116,7 +149,11 @@ describe("quarantine MP4 scanner", () => {
     const retryRepository = new MemoryScanRepository();
     const retryStorage = new MemoryScanStorage();
     retryStorage.readError = new Error("temporary storage failure");
-    await expect(runScanOnce({ repository: retryRepository, storage: retryStorage }))
+    await expect(runScanOnce({
+      repository: retryRepository,
+      storage: retryStorage,
+      malwareScanner: new MemoryMalwareScanner(),
+    }))
       .rejects.toThrowError(/temporary storage failure/i);
     expect(retryRepository.released).toBe("scan_storage_error");
     expect(retryRepository.failed).toBeUndefined();
@@ -125,7 +162,11 @@ describe("quarantine MP4 scanner", () => {
     finalRepository.job = { ...JOB, attempt: 3 };
     const finalStorage = new MemoryScanStorage();
     finalStorage.readError = new Error("persistent storage failure");
-    await expect(runScanOnce({ repository: finalRepository, storage: finalStorage }))
+    await expect(runScanOnce({
+      repository: finalRepository,
+      storage: finalStorage,
+      malwareScanner: new MemoryMalwareScanner(),
+    }))
       .rejects.toThrowError(/persistent storage failure/i);
     expect(finalRepository.failed).toBe("scan_storage_error");
     expect(finalRepository.released).toBeUndefined();
@@ -151,13 +192,56 @@ describe("quarantine MP4 scanner", () => {
     const storage = new MemoryScanStorage();
     storage.bytes = bytes;
 
-    await expect(runScanOnce({ repository, storage })).resolves.toMatchObject({
+    await expect(runScanOnce({
+      repository,
+      storage,
+      malwareScanner: new MemoryMalwareScanner(),
+    })).resolves.toMatchObject({
       outcome: "passed",
       durationMs: 182_200,
     });
-    expect(storage.ranges).toHaveLength(2);
+    expect(storage.ranges).toHaveLength(3);
     expect(storage.ranges[0]).toEqual({ offset: 0, maximumBytes: 524_288 });
     expect(storage.ranges[1]?.offset).toBe(bytes.byteLength - 524_288);
+    expect(storage.ranges[2]).toEqual({ offset: 0, maximumBytes: bytes.byteLength });
+  });
+
+  it("deletes infected objects and keeps scanner outages in quarantine", async () => {
+    const infectedRepository = new MemoryScanRepository();
+    const infectedStorage = new MemoryScanStorage();
+    const infectedScanner = new MemoryMalwareScanner();
+    infectedScanner.verdict = { status: "infected", scanner: "clamav" };
+    await expect(runScanOnce({
+      repository: infectedRepository,
+      storage: infectedStorage,
+      malwareScanner: infectedScanner,
+    })).resolves.toMatchObject({ outcome: "failed", failureCode: "malware_detected" });
+    expect(infectedStorage.deleted).toEqual([JOB.storageKey]);
+    expect(infectedRepository.failedMalware).toEqual({ status: "infected", scanner: "clamav" });
+
+    const unavailableRepository = new MemoryScanRepository();
+    const unavailableScanner = new MemoryMalwareScanner();
+    unavailableScanner.error = new Error("scanner unavailable");
+    await expect(runScanOnce({
+      repository: unavailableRepository,
+      storage: new MemoryScanStorage(),
+      malwareScanner: unavailableScanner,
+    })).rejects.toThrowError(/scanner unavailable/i);
+    expect(unavailableRepository.released).toBe("malware_scanner_error");
+    expect(unavailableRepository.completed).toBeUndefined();
+  });
+
+  it("releases a job when the object becomes truncated during full malware streaming", async () => {
+    const repository = new MemoryScanRepository();
+    repository.job = { ...JOB, expectedSize: VALID_MP4.byteLength + 1 };
+    const storage = new MemoryScanStorage();
+    await expect(runScanOnce({
+      repository,
+      storage,
+      malwareScanner: new MemoryMalwareScanner(),
+    })).rejects.toThrowError(/changed size/i);
+    expect(repository.released).toBe("scan_storage_error");
+    expect(repository.completed).toBeUndefined();
   });
 
   it("rejects missing audio, unsupported codecs, and unreasonable duration", () => {
@@ -200,7 +284,11 @@ describe("quarantine MP4 scanner", () => {
   it("does nothing when no uploaded source is available", async () => {
     const repository = new MemoryScanRepository();
     repository.job = null;
-    await expect(runScanOnce({ repository, storage: new MemoryScanStorage() }))
+    await expect(runScanOnce({
+      repository,
+      storage: new MemoryScanStorage(),
+      malwareScanner: new MemoryMalwareScanner(),
+    }))
       .resolves.toEqual({ outcome: "idle" });
   });
 });

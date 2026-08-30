@@ -15,5 +15,24 @@ services:
     volumes:
       - creator-agent-postgres:/var/lib/postgresql/data
 
+  malware-scanner:
+    image: clamav/clamav:1.4
+    environment:
+      CLAMD_CONF_StreamMaxLength: 250M
+      CLAMD_CONF_MaxFileSize: 250M
+      CLAMD_CONF_MaxScanSize: 300M
+      CLAMD_CONF_MaxScanTime: "120000"
+      CLAMD_CONF_MaxThreads: "2"
+      CLAMD_CONF_MaxQueue: "4"
+      CLAMD_CONF_ReadTimeout: "150"
+    ports:
+      - "127.0.0.1:3310:3310"
+    mem_limit: 4g
+    cpus: 2.0
+    pids_limit: 256
+    volumes:
+      - creator-agent-clamav:/var/lib/clamav
+
 volumes:
   creator-agent-postgres:
+  creator-agent-clamav:

@@ -39,10 +39,10 @@ The visibility route rejects an attempt to make any source public until a future
 
 ## Run locally
 
-Start local PostgreSQL if needed:
+Start local PostgreSQL and the private ClamAV service if needed:
 
 ```bash
-docker compose up -d database
+docker compose up -d database malware-scanner
 ```
 
 Copy `apps/api/.env.example` to `apps/api/.env.local` and set the Auth0 values. Environment files are not loaded implicitly by the server; either load the file with your preferred secret tool or export the variables in the current shell. For the bundled Compose database, the local connection string is:
@@ -65,7 +65,7 @@ npm run scan:once
 npm run cleanup:once
 ```
 
-Both one-shot commands use the same server-only database/storage configuration, print only opaque job metadata plus `aiCalls: 0`, and exit after one source or an idle result. `scan:once` requires migration 005; `cleanup:once` requires migration 006 and reconciles physical deletion for already tombstoned sources. Run them from a controlled scheduler. Neither invokes an AI provider.
+Both one-shot commands use server-only configuration, print only opaque job metadata plus `aiCalls: 0`, and exit after one source or an idle result. `scan:once` requires migrations through 009, private storage, and `MALWARE_SCANNER_HOST`; it fails closed when ClamAV is unavailable. `cleanup:once` requires migration 006 and reconciles physical deletion for already tombstoned sources. Run them from a controlled scheduler. Neither invokes an AI provider.
 
 The API listens on `http://127.0.0.1:4320`. Set `VITE_CREATOR_API_URL=http://127.0.0.1:4320` in the simulator's `.env.local`, restart the simulator, and complete Auth0 login.
 
@@ -78,7 +78,7 @@ The identity and workspace tables store:
 - Creation and last-seen timestamps
 - A deletion timestamp when access is revoked
 - Agent name, description, draft/publication state, and immutable configuration versions
-- Source title, media type, processing status, private/public/disabled visibility, opaque storage key, expected content type/size, upload-policy expiry, bounded scan state, detected duration/video/audio codecs, and storage-deletion completion/lease/attempt state
+- Source title, media type, processing status, private/public/disabled visibility, opaque storage key, expected content type/size, upload-policy expiry, bounded scan state, detected duration/video/audio codecs, malware verdict/scanner/time, and storage-deletion completion/lease/attempt state
 
 PostgreSQL does not store access tokens, passwords, email addresses, display names, profile images, uploaded bytes, transcripts, extracted text, storage credentials, or AI-provider credentials. Uploaded bytes live only in the configured private object store. A unique `(auth_issuer, auth_subject)` constraint provides stable mapping under concurrent logins. A deleted identity is not automatically reactivated.
 

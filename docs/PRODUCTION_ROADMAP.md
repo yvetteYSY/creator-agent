@@ -89,7 +89,7 @@ Exit criteria:
 The next free increments are:
 
 1. **Available:** stronger bounded MP4 duration/codec inspection;
-2. containerized malware-scanner adapter with a deterministic fake for CI;
+2. **Available:** containerized private ClamAV adapter with a deterministic fake and loopback protocol tests for CI;
 3. durable creator-provided WebVTT storage and review states;
 4. transcript approval and deletion propagation;
 5. tenant-filtered deterministic retrieval from approved durable chunks;

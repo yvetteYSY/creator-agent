@@ -489,7 +489,7 @@ function Studio({
                     />
                   </span>
                   <span className="processing-explainer"><Clock3 /> {uploadsEnabled
-                    ? "After private upload, the source stays unavailable until signature validation, malware scanning, and transcription are implemented."
+                    ? "After private upload, the source stays unavailable until the scheduled private scan passes and a transcript is reviewed."
                     : transcriptFile
                       ? "The WebVTT captions become timestamped knowledge locally. Neither file leaves this browser."
                       : "Without a WebVTT sidecar, the source stays in processing and cannot answer questions."}</span>

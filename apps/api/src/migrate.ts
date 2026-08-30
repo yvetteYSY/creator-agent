@@ -13,6 +13,7 @@ const migrations = [
   "006_storage_deletion_reconciliation.sql",
   "007_ingestion_audit_events.sql",
   "008_media_inspection.sql",
+  "009_malware_scanning.sql",
 ];
 const pool = new Pool({ connectionString: databaseUrl });
 const client = await pool.connect();

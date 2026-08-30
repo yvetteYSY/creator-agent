@@ -20,7 +20,7 @@ The default simulator is intentionally deterministic and local. **It makes no AI
 | Creator studio | A seeded creator can manage an agent and its knowledge sources in a responsive web interface. |
 | Text ingestion | Document or audio-transcript text can be pasted, chunked, and indexed in browser memory. Local video can also use a creator-provided WebVTT sidecar to create timestamped chunks without an AI call. |
 | Private MP4 upload | In managed Auth0 mode, an MP4 up to 250 MB uploads directly to private S3-compatible storage through a 10-minute, exact-key/type/size policy. The Auth0 token is sent only to the API, never to storage. Local mode still stages the file without a network request. |
-| Quarantine scan boundary | A zero-AI one-shot worker safely claims uploaded sources with PostgreSQL leases and reads at most two 512 KB ranges. It validates the MP4 brand, movie metadata, 1-second-to-4-hour duration, H.264 video, and AAC audio before persisting detected metadata and moving the source to **Awaiting transcription**. Invalid files are deleted and disabled. |
+| Quarantine scan boundary | A zero-AI one-shot worker safely claims uploaded sources with PostgreSQL leases, validates bounded MP4 metadata, then streams the exact full object in 1 MB chunks to a private ClamAV daemon. Only a clean verdict persists duration/codecs plus malware status and moves the source to **Awaiting transcription**. Invalid or infected files are deleted and disabled; scanner outages stay quarantined for bounded retry. |
 | Honest video status | A video without captions remains **Awaiting transcription**, and a durable upload stops at **Uploaded**. In local mode only, a valid creator-provided WebVTT sidecar makes timestamped caption chunks ready for preview or explicit public approval. |
 | Source privacy | Sources are preview-only by default and require explicit approval for public answers. Processing, disabled, preview-only, and deleted sources are excluded from public retrieval. |
 | Grounded chat | A deterministic local retrieval engine answers from approved text and returns source citations or says that it lacks enough information. |
@@ -41,7 +41,7 @@ The default simulator is intentionally deterministic and local. **It makes no AI
 - Default local-simulator state is held in memory and resets on refresh; configured Auth0 mode persists the creator workspace through the API.
 - The interface is a mobile-responsive web simulator, not yet an Expo/React Native app.
 - The protected API persists creator identity, agents, versioned configuration, source privacy metadata, and private-upload lifecycle metadata. Auth0 mode can upload MP4 bytes when S3-compatible storage is explicitly configured; local mode and pasted text remain browser-only.
-- Uploaded video is not automatically scanned. The opt-in one-shot worker performs bounded MP4 brand/movie-header/track inspection and enforces duration plus H.264/AAC limits, but malware scanning, checksum verification, sandboxed decoding, automatic transcription, and embedding are not implemented. A local video becomes available to deterministic retrieval only when its creator supplies a valid WebVTT sidecar; that transcript is not yet persisted in managed mode.
+- Uploaded video is not scanned by the API request process. The opt-in one-shot worker requires private ClamAV configuration, performs bounded MP4 brand/movie-header/track inspection, and streams the exact full object for a malware verdict. Checksum verification, sandboxed full decoding, automatic transcription, and embedding are not implemented. A local video becomes available to deterministic retrieval only when its creator supplies a valid WebVTT sidecar; that transcript is not yet persisted in managed mode.
 - Pasted text uses deterministic term matching rather than model-based embeddings or generation.
 - A real user-owned endpoint may create costs for its owner; Creator Agent never silently uses a platform or developer AI key.
 
@@ -65,7 +65,7 @@ Useful checks:
 ```bash
 npm test       # Core privacy, retrieval, idempotency, load, and UI tests
 npm run check  # Typecheck, test, and production build
-npm run scan:once # Claim and preliminarily validate at most one durable upload; requires API DB/storage env
+npm run scan:once # Inspect and malware-scan one durable upload; requires DB, storage, and private ClamAV env
 npm run cleanup:once # Reconcile at most one tombstoned stored object; requires API DB/storage env
 ```
 
@@ -78,7 +78,7 @@ npm run cleanup:once # Reconcile at most one tombstoned stored object; requires 
 5. Open **Load lab** and change traffic, concurrency, and queue limits.
 6. Observe bounded rejection when a popular agent exceeds safe capacity.
 
-In default local mode, simulator state resets on refresh and pasted content, selected video bytes, and WebVTT captions never leave the browser. A valid sidecar creates timestamped local knowledge immediately without calling an AI provider. In configured Auth0 mode, agent/source metadata persists and MP4 bytes upload directly to private object storage; the browser never receives storage credentials and never sends its Auth0 bearer token to storage. Managed video stays unavailable to retrieval until future scanning and transcription stages complete. See [local WebVTT ingestion](docs/LOCAL_VIDEO_TRANSCRIPTS.md) and [private video uploads](docs/PRIVATE_UPLOADS.md).
+In default local mode, simulator state resets on refresh and pasted content, selected video bytes, and WebVTT captions never leave the browser. A valid sidecar creates timestamped local knowledge immediately without calling an AI provider. In configured Auth0 mode, agent/source metadata persists and MP4 bytes upload directly to private object storage; the browser never receives storage credentials and never sends its Auth0 bearer token to storage. Managed video stays unavailable to retrieval until the separately scheduled quarantine scan and future transcription/review stages complete. See [local WebVTT ingestion](docs/LOCAL_VIDEO_TRANSCRIPTS.md) and [private video uploads](docs/PRIVATE_UPLOADS.md).
 
 ### Zero-cost end-to-end routing
 
@@ -102,7 +102,7 @@ To connect a real user-owned agent, replace the local URL with an HTTPS endpoint
 - Audience authentication
 - Durable conversation persistence
 - Upload retries, resumable/multipart upload, audit retention/export controls, and retention-policy verification
-- Full sample-table/media decoding validation, checksum verification, malware scanning, and parser sandboxing
+- Full sample-table/media decoding validation, checksum verification, parser sandboxing, and continuous scan scheduling
 - PDF, Markdown, and plain-text file extraction
 - Automatic audio/video transcription and durable transcript review/persistence
 - Embeddings, vector retrieval, model generation, and streaming responses
@@ -127,7 +127,7 @@ Keep the current deterministic simulator as a zero-cost product demo and regress
 
 1. **Available:** issue a 10-minute signed POST policy for one allowlisted format, starting with MP4.
 2. **Available:** upload directly to private object storage without proxying large video bytes or forwarding the Auth0 token.
-3. **Partially available:** pin declared MIME type and exact byte size, verify stored metadata, then read at most two 512 KB ranges to inspect a supported ISO BMFF brand, movie duration, H.264 video track, and AAC audio track. Full decoding, checksum verification, and malware scanning remain next.
+3. **Available for scheduled scans:** pin declared MIME type and exact byte size, inspect a supported ISO BMFF brand, movie duration, H.264 video track, and AAC audio track, then stream the exact object to private ClamAV in bounded chunks. Full decoding and checksum verification remain next.
 4. **Partially available:** lease-based, concurrency-safe one-shot worker with `uploaded → scanning → processing/failed`; continuous scheduling and `transcribing → ready` remain next.
 5. **Available in local simulation:** accept a creator-provided WebVTT sidecar and build timestamped deterministic chunks without an AI call. Next, route automatic transcription to either a self-hosted worker or a creator-owned endpoint and record the selected processor and usage without logging content.
 6. Let the creator review the timestamped transcript before approving it for public answers.
@@ -214,7 +214,7 @@ creator-agent/
 └── README.md
 ```
 
-The next production increment is a sandboxed malware/checksum adapter around the bounded media-inspection worker before any transcription route can see the upload. The actual mobile and transcription-worker packages still wait on provider, hosting, privacy, and beta-cohort decisions. The deterministic core remains useful for product demos and fast policy regression tests.
+The next production increment is durable creator-provided WebVTT storage and review state, alongside checksum/full-decoder hardening before any automatic transcription route can see the upload. The actual mobile and transcription-worker packages still wait on provider, hosting, privacy, and beta-cohort decisions. The deterministic core remains useful for product demos and fast policy regression tests.
 
 ## Delivery milestones
 
@@ -230,8 +230,9 @@ The next production increment is a sandboxed malware/checksum adapter around the
 
 - **Available:** local video staging plus configured private direct MP4 upload with exact-size/type enforcement and safe non-ready state
 - **Available:** bounded MP4 brand, duration, H.264/AAC track validation with detected metadata persistence and invalid-object deletion
+- **Available:** private ClamAV `INSTREAM` adapter, bounded full-object streaming, persisted clean/infected status, fail-closed retry behavior, and a free deterministic protocol suite
 - **Available:** tombstone-first object deletion with lease-based retry reconciliation
-- **Next:** sandboxed decoding/checksum and malware scanning, real transcription, transcript review, upload retry, and audit retention/export controls
+- **Next:** sandboxed full decoding/checksum, durable creator-provided transcripts and review, real transcription, upload retry, and audit retention/export controls
 
 ### Milestone 2 — Grounded chat
 
