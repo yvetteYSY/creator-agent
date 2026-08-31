@@ -1,21 +1,10 @@
 import { readFile } from "node:fs/promises";
 import { Pool } from "pg";
+import { MIGRATIONS } from "./migration-manifest";
 
 const databaseUrl = process.env.DATABASE_URL?.trim();
 if (!databaseUrl) throw new Error("DATABASE_URL is required.");
 
-const migrations = [
-  "001_creator_identities.sql",
-  "002_creator_workspace.sql",
-  "003_agent_customization.sql",
-  "004_private_uploads.sql",
-  "005_quarantine_scanning.sql",
-  "006_storage_deletion_reconciliation.sql",
-  "007_ingestion_audit_events.sql",
-  "008_media_inspection.sql",
-  "009_malware_scanning.sql",
-  "010_creator_transcripts.sql",
-];
 const pool = new Pool({ connectionString: databaseUrl });
 const client = await pool.connect();
 
@@ -25,7 +14,7 @@ try {
     name text PRIMARY KEY,
     applied_at timestamptz NOT NULL DEFAULT now()
   )`);
-  for (const migration of migrations) {
+  for (const migration of MIGRATIONS) {
     const applied = await client.query<{ exists: boolean }>(
       "SELECT EXISTS (SELECT 1 FROM schema_migrations WHERE name = $1) AS exists",
       [migration],
