@@ -67,6 +67,8 @@ Open `http://127.0.0.1:4173`.
 
 Development defaults to an explicit local session. To exercise managed OIDC, configure an Auth0 Single Page Application, custom API, and PostgreSQL identity store using the [authentication setup guide](docs/AUTHENTICATION.md) and [API guide](docs/API.md). Production builds reject local authentication and fail closed when Auth0 or API configuration is missing.
 
+For a public no-AI-cost beta, use the [free deployment guide](docs/DEPLOY_FREE_BETA.md) and included Render Blueprint. Free services sleep and have strict limits, so this path is for demos and beta validation rather than production availability.
+
 The staged path from this MVP to a secure closed beta and public service is tracked in the [production readiness roadmap](docs/PRODUCTION_ROADMAP.md). Development and CI remain deterministic and free of paid AI calls.
 
 Useful checks:
@@ -217,6 +219,7 @@ creator-agent/
 │   ├── API.md           # Protected API setup and identity data boundary
 │   ├── AUTHENTICATION.md # Auth0 OIDC setup and security boundary
 │   ├── CUSTOMIZATION.md # Knowledge/style separation and evaluation
+│   ├── DEPLOY_FREE_BETA.md # Render + Neon + Auth0 free beta launch path
 │   ├── GITHUB_APP.md    # Free read-only GitHub App setup and import boundary
 │   ├── LOCAL_VIDEO_TRANSCRIPTS.md # Zero-cost WebVTT sidecar workflow
 │   ├── PRIVACY.md       # Prototype and GitHub integration privacy notice

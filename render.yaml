@@ -1,0 +1,51 @@
+services:
+  - type: web
+    name: creator-agent-yvetteysy-api
+    runtime: node
+    plan: free
+    region: oregon
+    buildCommand: npm ci --include=dev && npm run build --workspace @creator-agent/core && npm run build --workspace @creator-agent/api
+    startCommand: npm run db:migrate && npm run start --workspace @creator-agent/api
+    healthCheckPath: /health
+    envVars:
+      - key: API_HOST
+        value: 0.0.0.0
+      - key: API_ALLOWED_ORIGIN
+        value: https://creator-agent-yvetteysy.onrender.com
+      - key: AUTH0_ISSUER_BASE_URL
+        sync: false
+      - key: AUTH0_AUDIENCE
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+
+  - type: web
+    name: creator-agent-yvetteysy
+    runtime: static
+    buildCommand: npm ci --include=dev && npm run build --workspace @creator-agent/core && npm run build --workspace @creator-agent/simulator
+    staticPublishPath: apps/simulator/dist
+    envVars:
+      - key: VITE_AUTH_MODE
+        value: auth0
+      - key: VITE_CREATOR_API_URL
+        value: https://creator-agent-yvetteysy-api.onrender.com
+      - key: VITE_AUTH0_DOMAIN
+        sync: false
+      - key: VITE_AUTH0_CLIENT_ID
+        sync: false
+      - key: VITE_AUTH0_AUDIENCE
+        sync: false
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    headers:
+      - path: /*
+        name: X-Content-Type-Options
+        value: nosniff
+      - path: /*
+        name: Referrer-Policy
+        value: strict-origin-when-cross-origin
+      - path: /*
+        name: Permissions-Policy
+        value: camera=(), microphone=(), geolocation=()
