@@ -25,6 +25,7 @@ For the complete build retrospective and key lessons, read [Turn Your Content In
 | Durable creator identity | PostgreSQL maps verified `(issuer, sub)` values to an opaque internal UUID without storing profile data or access tokens. |
 | Owner-scoped workspace API | Authenticated routes create, list, read, and version agents plus private-by-default source metadata. Every database path includes the verified internal owner ID. |
 | Durable studio synchronization | Auth0 mode loads or bootstraps the creator's agent, restores customization, and persists configuration plus new source metadata updates. Local mode remains network-free. |
+| Free GitHub App integration | Managed creators can install a minimum-permission GitHub App on selected repositories, list only approved repositories, and import one Markdown/MDX/text file (up to 1 MB) as preview-only knowledge. Tokens stay server-side and no AI call is made. See the [launch guide](docs/GITHUB_APP.md). |
 | Creator studio | A seeded creator can manage an agent and its knowledge sources in a responsive web interface. |
 | Text ingestion | Document or audio-transcript text can be pasted, chunked, and indexed in browser memory. Local video can use a creator-provided WebVTT sidecar immediately; the managed API can durably store and version a validated WebVTT draft after quarantine scanning without an AI call. |
 | Private MP4 upload | In managed Auth0 mode, an MP4 up to 250 MB uploads directly to private S3-compatible storage through a 10-minute, exact-key/type/size policy. The Auth0 token is sent only to the API, never to storage. Local mode still stages the file without a network request. |
@@ -86,6 +87,8 @@ npm run cleanup:once # Reconcile at most one tombstoned stored object; requires 
 5. Open **Load lab** and change traffic, concurrency, and queue limits.
 6. Observe bounded rejection when a popular agent exceeds safe capacity.
 
+With managed Auth0 and the optional GitHub App configured, choose **Add source → GitHub repository** to connect selected repositories and import one text file privately. See [GitHub App setup and data boundaries](docs/GITHUB_APP.md).
+
 In default local mode, simulator state resets on refresh and pasted content, selected video bytes, and WebVTT captions never leave the browser. A valid sidecar creates timestamped local knowledge immediately without calling an AI provider. In configured Auth0 mode, agent/source metadata persists and MP4 bytes upload directly to private object storage; the browser never receives storage credentials and never sends its Auth0 bearer token to storage. Managed video stays unavailable to retrieval until the separately scheduled quarantine scan and explicit transcript approval complete; the managed review UI and durable cue retrieval are still pending. See [local WebVTT ingestion](docs/LOCAL_VIDEO_TRANSCRIPTS.md) and [private video uploads](docs/PRIVATE_UPLOADS.md).
 
 ### Zero-cost end-to-end routing
@@ -111,7 +114,7 @@ To connect a real user-owned agent, replace the local URL with an HTTPS endpoint
 - Durable conversation persistence
 - Upload retries, resumable/multipart upload, audit retention/export controls, and retention-policy verification
 - Full sample-table/media decoding validation, checksum verification, parser sandboxing, and continuous scan scheduling
-- PDF, Markdown, and plain-text file extraction
+- PDF and local Markdown/plain-text file upload extraction (selected GitHub Markdown/MDX/text import is available)
 - Automatic audio/video transcription and managed transcript-review UI
 - Embeddings, vector retrieval, model generation, and streaming responses
 - Native Expo/React Native application
@@ -214,9 +217,12 @@ creator-agent/
 │   ├── API.md           # Protected API setup and identity data boundary
 │   ├── AUTHENTICATION.md # Auth0 OIDC setup and security boundary
 │   ├── CUSTOMIZATION.md # Knowledge/style separation and evaluation
+│   ├── GITHUB_APP.md    # Free read-only GitHub App setup and import boundary
 │   ├── LOCAL_VIDEO_TRANSCRIPTS.md # Zero-cost WebVTT sidecar workflow
+│   ├── PRIVACY.md       # Prototype and GitHub integration privacy notice
 │   ├── PRIVATE_UPLOADS.md # Signed MP4 upload and data-protection boundary
 │   ├── PRODUCTION_ROADMAP.md # Closed-beta and public-launch execution plan
+│   ├── SUPPORT.md       # Support and private security-reporting process
 │   └── DESIGN.md        # Product, architecture, privacy, and scale design
 ├── package.json         # npm workspace scripts
 └── README.md

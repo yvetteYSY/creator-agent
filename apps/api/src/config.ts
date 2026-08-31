@@ -3,6 +3,7 @@ export interface ApiConfiguration {
   audience: string;
   databaseUrl: string;
   allowedOrigin: string;
+  host: string;
   port: number;
 }
 
@@ -19,6 +20,10 @@ export function loadApiConfiguration(environment: NodeJS.ProcessEnv): ApiConfigu
     throw new Error("API_PORT must be a valid TCP port.");
   }
   const allowedOrigin = environment.API_ALLOWED_ORIGIN?.trim() ?? "http://127.0.0.1:4173";
+  const host = environment.API_HOST?.trim() ?? "127.0.0.1";
+  if (host !== "127.0.0.1" && host !== "0.0.0.0") {
+    throw new Error("API_HOST must be 127.0.0.1 or 0.0.0.0.");
+  }
   const origin = new URL(allowedOrigin);
   if (!/^https?:$/.test(origin.protocol) || origin.origin !== allowedOrigin) {
     throw new Error("API_ALLOWED_ORIGIN must be one exact HTTP(S) origin.");
@@ -28,6 +33,7 @@ export function loadApiConfiguration(environment: NodeJS.ProcessEnv): ApiConfigu
     audience: required(environment, "AUTH0_AUDIENCE"),
     databaseUrl: required(environment, "DATABASE_URL"),
     allowedOrigin,
+    host,
     port: parsedPort,
   };
 }

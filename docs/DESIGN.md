@@ -1,7 +1,7 @@
 # Creator Agent — Product and Technical Design
 
 **Status:** Draft for kickoff  
-**Last updated:** 2026-08-25
+**Last updated:** 2026-08-30
 **Audience:** Product, design, engineering, AI/evaluation, trust and safety
 
 ## 1. Summary
@@ -23,6 +23,8 @@ Connecting a real AI provider is a separate, explicit production milestone. Befo
 The protected API validates Auth0 access tokens and stores an opaque internal user ID, verified OIDC issuer/subject, owner-scoped agents, immutable configuration versions, source metadata, and upload lifecycle metadata. Browser profile data, bearer tokens, and storage credentials are not persisted in PostgreSQL. The API derives creator ownership from the verified identity and never trusts a client-supplied owner ID.
 
 The prototype supports an explicit Bring Your Own Agent (BYOA) route. Creator Agent performs authorization and retrieval, then sends only the current question, bounded history, agent instructions, and approved excerpts to the selected endpoint. The route is disabled by default, requires an ownership/trust acknowledgement, accepts HTTPS for remote endpoints or HTTP only on localhost, and keeps any bearer token in memory. See [AGENT_ROUTING.md](AGENT_ROUTING.md).
+
+The optional GitHub App is a zero-AI ingestion path. A managed creator grants read-only Contents/Metadata access to selected repositories, chooses one Markdown/MDX/text file, and receives a preview-only imported copy. OAuth user verification binds the installation to the initiating Creator Agent owner; GitHub credentials stay server-side and are not persisted. See [GITHUB_APP.md](GITHUB_APP.md).
 
 ## 2. Problem
 
@@ -141,6 +143,29 @@ An answer should visually separate generated prose from citations. When evidence
 - Original uploads and derived artifacts use distinct storage prefixes and retention rules.
 - Provider-specific payloads are isolated behind transcription, embedding, generation, and moderation interfaces.
 - Every query is scoped by `agent_id`; vector retrieval must never cross tenant boundaries.
+
+### GitHub source connection
+
+```text
+Authenticated creator
+        │ one-time owner-bound state
+        ▼
+GitHub installation + OAuth confirmation
+        │ signed lifecycle webhooks
+        ▼
+Creator Agent API ── short-lived installation token ──▶ GitHub Contents API
+        │                                                        │
+        └── owner/agent/install authorization ◀── selected file ─┘
+                                 │
+                                 ▼
+                  PostgreSQL preview-only source copy
+```
+
+Installation state is random, expires after ten minutes, is stored only as a SHA-256 digest, and is consumed once. The OAuth user token exists only long enough to confirm the user can administer the installation. Repository operations mint a short-lived installation token for read-only Contents/Metadata and discard it after the request.
+
+All creator-facing routes authorize the Auth0 principal first, derive the opaque owner ID server-side, and scope installation/agent/source queries to that owner. This prevents two concurrent creators from claiming or querying one another's installations. A database primary key prevents one installation from being bound to multiple Creator Agent owners. Signed install/suspend/uninstall webhooks update lifecycle state; non-active installations fail closed before repository access.
+
+The first slice deliberately imports one explicitly selected UTF-8 `.md`, `.mdx`, or `.txt` file up to 1 MB. It does not clone repositories, traverse trees, follow links, scan Git history, or call an AI provider. The imported copy begins preview-only and inherits source deletion and audit controls.
 
 ### Concurrent audience interaction
 
@@ -281,6 +306,12 @@ Use UUIDs, explicit tenant keys, UTC timestamps, and soft deletion where immedia
 GET    /health
 GET    /v1/me
 
+POST   /v1/github/connect
+GET    /v1/github/callback
+POST   /v1/github/webhooks
+GET    /v1/github/installations
+GET    /v1/github/installations/:installationId/repositories
+
 GET    /v1/agents
 POST   /v1/agents
 GET    /v1/agents/:agentId
@@ -295,6 +326,7 @@ DELETE /v1/agents/:agentId/sources/:sourceId
 POST   /v1/agents/:agentId/sources/uploads
 POST   /v1/agents/:agentId/sources/:sourceId/complete
 POST   /v1/agents/:agentId/sources/:sourceId/retry
+POST   /v1/agents/:agentId/sources/github
 
 POST   /v1/agents/:agentId/preview/messages
 POST   /v1/public/agents/:slug/conversations

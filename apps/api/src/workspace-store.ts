@@ -523,6 +523,11 @@ export class PostgresWorkspaceRepository implements WorkspaceRepository {
       const row = result.rows[0];
       if (!row) throw new WorkspaceRecordNotFoundError("Source not found.");
       await client.query(
+        `DELETE FROM github_source_imports
+         WHERE owner_id = $1 AND agent_id = $2 AND source_id = $3`,
+        [ownerId, agentId, sourceId],
+      );
+      await client.query(
         `UPDATE source_transcripts
          SET webvtt = '', cue_count = 0, duration_ms = 0, status = 'rejected',
            approved_at = NULL, rejected_at = now(), deleted_at = now(), updated_at = now()
