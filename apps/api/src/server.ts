@@ -7,15 +7,24 @@ import { handleApiRequest } from "./handler";
 import { PostgresWorkspaceRepository } from "./workspace-store";
 import { createObjectStorage, loadObjectStorageConfiguration } from "./object-storage";
 import { PostgresTranscriptRepository } from "./transcript-store";
+import { GitHubAppClient, loadGitHubAppConfiguration } from "./github-app";
+import { PostgresGitHubIntegrationRepository } from "./github-store";
+import { handleGitHubWebhook } from "./github-webhook";
+import { completeGitHubConnection } from "./handler";
 
 const configuration = loadApiConfiguration(process.env);
 const pool = new Pool({ connectionString: configuration.databaseUrl });
+const githubConfiguration = loadGitHubAppConfiguration(process.env);
+const githubIntegrations = new PostgresGitHubIntegrationRepository(pool);
+const github = githubConfiguration ? new GitHubAppClient(githubConfiguration) : undefined;
 const dependencies = {
   verifier: new Auth0AccessTokenVerifier(configuration),
   creators: new PostgresCreatorRepository(pool),
   workspace: new PostgresWorkspaceRepository(pool),
   storage: createObjectStorage(loadObjectStorageConfiguration(process.env)),
   transcripts: new PostgresTranscriptRepository(pool),
+  github,
+  githubIntegrations: github ? githubIntegrations : undefined,
 };
 
 class HttpRequestError extends Error {
@@ -24,7 +33,7 @@ class HttpRequestError extends Error {
   }
 }
 
-async function readJsonBody(request: import("node:http").IncomingMessage, maximumBytes = 64 * 1024) {
+async function readRequestBody(request: import("node:http").IncomingMessage, maximumBytes = 64 * 1024) {
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of request) {
@@ -33,9 +42,14 @@ async function readJsonBody(request: import("node:http").IncomingMessage, maximu
     if (size > maximumBytes) throw new HttpRequestError("Request body exceeds the route limit.", 413);
     chunks.push(buffer);
   }
-  if (size === 0) return undefined;
+  return Buffer.concat(chunks);
+}
+
+async function readJsonBody(request: import("node:http").IncomingMessage, maximumBytes = 64 * 1024) {
+  const body = await readRequestBody(request, maximumBytes);
+  if (body.byteLength === 0) return undefined;
   try {
-    return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    return JSON.parse(body.toString("utf8"));
   } catch {
     throw new HttpRequestError("Request body must be valid JSON.", 400);
   }
@@ -52,7 +66,8 @@ function sendJson(response: ServerResponse, status: number, body: unknown, origi
 }
 
 const server = createServer(async (request, response) => {
-  const requestPath = new URL(request.url ?? "/", "http://api.local").pathname;
+  const requestUrl = new URL(request.url ?? "/", "http://api.local");
+  const requestPath = requestUrl.pathname;
   const origin = request.headers.origin;
   if (origin && origin !== configuration.allowedOrigin) {
     sendJson(response, 403, { error: "Origin is not allowed." });
@@ -70,6 +85,38 @@ const server = createServer(async (request, response) => {
     return;
   }
   try {
+    if (request.method === "POST" && requestPath === "/v1/github/webhooks") {
+      if (!githubConfiguration || !dependencies.githubIntegrations) {
+        sendJson(response, 503, { error: "GitHub App integration is not configured." });
+        return;
+      }
+      const result = await handleGitHubWebhook({
+        event: header(request.headers["x-github-event"]),
+        delivery: header(request.headers["x-github-delivery"]),
+        signature: header(request.headers["x-hub-signature-256"]),
+        payload: await readRequestBody(request, 1024 * 1024),
+      }, githubConfiguration, dependencies.githubIntegrations);
+      sendJson(response, result.status, result.body);
+      return;
+    }
+    if (request.method === "GET" && requestPath === "/v1/github/callback") {
+      if (!github) {
+        sendJson(response, 503, { error: "GitHub App integration is not configured." });
+        return;
+      }
+      try {
+        const installationId = Number(requestUrl.searchParams.get("installation_id"));
+        await completeGitHubConnection({
+          state: requestUrl.searchParams.get("state") ?? "",
+          code: requestUrl.searchParams.get("code") ?? "",
+          installationId,
+        }, dependencies);
+        redirect(response, configuration.allowedOrigin, "connected");
+      } catch {
+        redirect(response, configuration.allowedOrigin, "error");
+      }
+      return;
+    }
     const result = await handleApiRequest({
       method: request.method ?? "GET",
       path: requestPath,
@@ -91,9 +138,20 @@ const server = createServer(async (request, response) => {
   }
 });
 
-server.listen(configuration.port, "127.0.0.1", () => {
-  console.log(`Creator Agent API listening on http://127.0.0.1:${configuration.port}`);
+server.listen(configuration.port, configuration.host, () => {
+  console.log(`Creator Agent API listening on http://${configuration.host}:${configuration.port}`);
 });
+
+function header(value: string | string[] | undefined) {
+  return Array.isArray(value) ? value[0] : value;
+}
+
+function redirect(response: ServerResponse, origin: string, githubStatus: "connected" | "error") {
+  const destination = new URL(origin);
+  destination.searchParams.set("github", githubStatus);
+  response.writeHead(303, { location: destination.toString(), "cache-control": "no-store" });
+  response.end();
+}
 
 async function shutdown() {
   server.close();

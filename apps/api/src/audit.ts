@@ -38,7 +38,7 @@ function safeMetadata(metadata: Record<string, string | number | boolean | null>
     } else if (key === "status") {
       if (
         value !== "awaiting_upload" && value !== "uploaded" && value !== "scanning" &&
-        value !== "processing" && value !== "failed" && value !== "deleting"
+        value !== "processing" && value !== "ready" && value !== "failed" && value !== "deleting"
       ) invalidMetadata();
     } else if (key === "visibility") {
       if (value !== "preview" && value !== "disabled") invalidMetadata();

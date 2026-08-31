@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { WebVttValidationError } from "@creator-agent/core";
 import {
   AuthenticationError,
@@ -24,6 +24,19 @@ import {
   type ObjectStorage,
 } from "./object-storage";
 import type { TranscriptRecord, TranscriptRepository } from "./transcript-store";
+import {
+  GitHubApiError,
+  GitHubAppUnavailableError,
+  GitHubContentValidationError,
+  type GitHubAppApi,
+} from "./github-app";
+import {
+  GitHubConnectionStateError,
+  GitHubInstallationConflictError,
+  GitHubInstallationNotFoundError,
+  type GitHubInstallationRecord,
+  type GitHubIntegrationRepository,
+} from "./github-store";
 
 export interface ApiRequest {
   method: string;
@@ -43,6 +56,8 @@ export interface ApiDependencies {
   workspace: WorkspaceRepository;
   storage?: ObjectStorage;
   transcripts?: TranscriptRepository;
+  github?: GitHubAppApi;
+  githubIntegrations?: GitHubIntegrationRepository;
 }
 
 class RequestValidationError extends Error {}
@@ -54,6 +69,8 @@ const SOURCE_ITEM_PATTERN = /^\/v1\/agents\/([^/]+)\/sources\/([^/]+)$/;
 const SOURCE_UPLOAD_PATTERN = /^\/v1\/agents\/([^/]+)\/sources\/uploads$/;
 const SOURCE_COMPLETE_PATTERN = /^\/v1\/agents\/([^/]+)\/sources\/([^/]+)\/complete$/;
 const SOURCE_TRANSCRIPT_PATTERN = /^\/v1\/agents\/([^/]+)\/sources\/([^/]+)\/transcript$/;
+const GITHUB_INSTALLATION_REPOSITORIES_PATTERN = /^\/v1\/github\/installations\/(\d+)\/repositories$/;
+const GITHUB_SOURCE_IMPORT_PATTERN = /^\/v1\/agents\/([^/]+)\/sources\/github$/;
 
 export async function handleApiRequest(
   request: ApiRequest,
@@ -67,6 +84,65 @@ export async function handleApiRequest(
     if (request.method === "GET" && request.path === "/v1/me") {
       const creator = await authorize(request, dependencies, "read:creator");
       return { status: 200, body: { creator: publicCreator(creator) } };
+    }
+
+    if (request.method === "POST" && request.path === "/v1/github/connect") {
+      const creator = await authorize(request, dependencies, "write:agent");
+      const github = availableGitHub(dependencies);
+      const state = randomBytes(32).toString("base64url");
+      await github.integrations.beginConnection(
+        creator.id,
+        stateDigest(state),
+        new Date(Date.now() + 10 * 60_000).toISOString(),
+      );
+      return { status: 201, body: { installationUrl: github.api.installationUrl(state), expiresInSeconds: 600 } };
+    }
+
+    if (request.method === "GET" && request.path === "/v1/github/installations") {
+      const creator = await authorize(request, dependencies, "read:creator");
+      const github = availableGitHub(dependencies);
+      const installations = await github.integrations.listInstallations(creator.id);
+      return { status: 200, body: { installations: installations.map(publicGitHubInstallation) } };
+    }
+
+    const installationRepositories = GITHUB_INSTALLATION_REPOSITORIES_PATTERN.exec(request.path);
+    if (request.method === "GET" && installationRepositories) {
+      const creator = await authorize(request, dependencies, "read:creator");
+      const github = availableGitHub(dependencies);
+      const installationId = numericId(installationRepositories[1], "GitHub installation ID");
+      const installation = await github.integrations.getInstallation(creator.id, installationId);
+      if (installation.status !== "active") throw new GitHubInstallationConflictError("The GitHub installation is not active.");
+      const repositories = await github.api.listRepositories(installationId);
+      return { status: 200, body: { repositories } };
+    }
+
+    const githubSourceImport = GITHUB_SOURCE_IMPORT_PATTERN.exec(request.path);
+    if (request.method === "POST" && githubSourceImport) {
+      const creator = await authorize(request, dependencies, "write:agent");
+      const github = availableGitHub(dependencies);
+      const agentId = resourceId(githubSourceImport[1], "agent ID");
+      const input = parseGitHubImport(request.body);
+      const installation = await github.integrations.getInstallation(creator.id, input.installationId);
+      if (installation.status !== "active") throw new GitHubInstallationConflictError("The GitHub installation is not active.");
+      if (installation.accountLogin.toLowerCase() !== input.repositoryOwner.toLowerCase()) {
+        throw new GitHubInstallationNotFoundError("Repository installation not found.");
+      }
+      const file = await github.api.readTextFile({
+        installationId: input.installationId,
+        owner: input.repositoryOwner,
+        repository: input.repositoryName,
+        path: input.path,
+        ref: input.ref,
+      });
+      const imported = await github.integrations.importTextSource(creator.id, agentId, { ...input, file });
+      return {
+        status: 201,
+        body: {
+          source: publicSource(imported.source),
+          content: imported.content,
+          origin: imported.origin,
+        },
+      };
     }
 
     if (request.path === "/v1/agents" && request.method === "GET") {
@@ -267,8 +343,35 @@ export async function handleApiRequest(
     if (error instanceof ObjectStorageUnavailableError) {
       return { status: 503, body: { error: "Private upload storage is unavailable." } };
     }
+    if (error instanceof GitHubAppUnavailableError) {
+      return { status: 503, body: { error: "GitHub App integration is not configured." } };
+    }
+    if (error instanceof GitHubContentValidationError || error instanceof GitHubConnectionStateError) {
+      return { status: 400, body: { error: error.message } };
+    }
+    if (error instanceof GitHubInstallationNotFoundError) {
+      return { status: 404, body: { error: "Not found." } };
+    }
+    if (error instanceof GitHubInstallationConflictError) {
+      return { status: 409, body: { error: error.message } };
+    }
+    if (error instanceof GitHubApiError) {
+      return { status: 502, body: { error: "GitHub is temporarily unavailable." } };
+    }
     throw error;
   }
+}
+
+export async function completeGitHubConnection(
+  input: { state: string; code: string; installationId: number },
+  dependencies: ApiDependencies,
+) {
+  const github = availableGitHub(dependencies);
+  if (!/^[A-Za-z0-9_-]{32,200}$/.test(input.state)) {
+    throw new GitHubConnectionStateError("The GitHub connection session is invalid.");
+  }
+  const installation = await github.api.authorizeUserInstallation(input.code, input.installationId);
+  return github.integrations.completeConnection(stateDigest(input.state), installation);
 }
 
 async function authorize(
@@ -418,6 +521,19 @@ function parseCreateSource(body: unknown): CreateSourceInput {
   return { title: text(input, "title", 160, { required: true })!, type: type as SourceType };
 }
 
+function parseGitHubImport(body: unknown) {
+  const input = objectBody(body);
+  rejectUnknown(input, ["installationId", "title", "repositoryOwner", "repositoryName", "path", "ref"]);
+  return {
+    installationId: numericValue(input.installationId, "installationId"),
+    title: text(input, "title", 160, { required: true })!,
+    repositoryOwner: text(input, "repositoryOwner", 100, { required: true })!,
+    repositoryName: text(input, "repositoryName", 100, { required: true })!,
+    path: text(input, "path", 1024, { required: true })!,
+    ref: text(input, "ref", 255),
+  };
+}
+
 function parseVisibility(body: unknown): SourceVisibility {
   const input = objectBody(body);
   rejectUnknown(input, ["visibility"]);
@@ -471,9 +587,32 @@ function availableTranscripts(transcripts?: TranscriptRepository) {
   return transcripts;
 }
 
+function availableGitHub(dependencies: ApiDependencies) {
+  if (!dependencies.github || !dependencies.githubIntegrations) {
+    throw new GitHubAppUnavailableError("GitHub App integration is unavailable.");
+  }
+  return { api: dependencies.github, integrations: dependencies.githubIntegrations };
+}
+
 function resourceId(value: string | undefined, label: string) {
   if (!value || !UUID_PATTERN.test(value)) throw new RequestValidationError(`${label} must be a UUID.`);
   return value;
+}
+
+function numericId(value: string | undefined, label: string) {
+  if (!value || !/^\d{1,18}$/.test(value)) throw new RequestValidationError(`${label} is invalid.`);
+  return numericValue(Number(value), label);
+}
+
+function numericValue(value: unknown, label: string) {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value <= 0) {
+    throw new RequestValidationError(`${label} must be a positive integer.`);
+  }
+  return value;
+}
+
+function stateDigest(state: string) {
+  return createHash("sha256").update(state, "utf8").digest("hex");
 }
 
 function publicCreator(creator: CreatorRecord) {
@@ -487,6 +626,11 @@ function publicAgent(agent: AgentRecord) {
 
 function publicSource(source: SourceRecord) {
   const { ownerId: _ownerId, ...safe } = source;
+  return safe;
+}
+
+function publicGitHubInstallation(installation: GitHubInstallationRecord) {
+  const { ownerId: _ownerId, ...safe } = installation;
   return safe;
 }
 

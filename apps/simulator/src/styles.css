@@ -133,6 +133,13 @@ h1 { font: 800 36px/1.12 ui-sans-serif, sans-serif; letter-spacing: -.035em; mar
 .source-form > label { display: block; margin-top: 12px; }
 .video-picker { display: block; margin-top: 12px; }
 .video-inputs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.github-source-fields { display: grid; gap: 12px; }
+.github-connect-card { display: flex; align-items: center; gap: 12px; padding: 14px; border: 1px solid var(--line); border-radius: 11px; background: white; }
+.github-connect-card > svg { width: 24px; height: 24px; color: var(--ink); flex: 0 0 auto; }
+.github-connect-card > span { display: grid; gap: 3px; flex: 1; }
+.github-connect-card strong { color: var(--ink); font-size: 12px; }
+.github-connect-card small { color: var(--muted); font-size: 10px; line-height: 1.4; }
+.github-connect-card .button { width: auto; margin: 0; }
 .file-drop { position: relative; display: grid; grid-template-columns: 34px 1fr; align-items: center; gap: 10px; min-height: 76px; margin-top: 6px; padding: 13px; overflow: hidden; color: var(--green); background: white; border: 1px dashed #aabbb1; border-radius: 10px; cursor: pointer; }
 .file-drop.selected { border-style: solid; border-color: #77aa8d; background: #f8fcf9; }
 .file-drop > svg { width: 24px; height: 24px; }

@@ -2,10 +2,13 @@
 import { cleanup } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  beginGitHubConnection,
   createDurableSource,
   DEFAULT_DURABLE_AGENT,
   deleteDurableSource,
   fetchCreatorProfile,
+  importDurableGitHubSource,
+  listDurableGitHubRepositories,
   openCreatorWorkspace,
   resolveCreatorApiConfiguration,
   saveDurableAgent,
@@ -250,5 +253,62 @@ describe("protected creator workspace client", () => {
       .toBe(false);
     expect(fetcher.mock.calls.some(([url]) => String(url).endsWith(`/sources/${durableSource.id}`)))
       .toBe(true);
+  });
+
+  it("accepts only a github.com installation redirect", async () => {
+    const common = {
+      baseUrl: "https://api.example",
+      getAccessToken: async () => "signed-token",
+    };
+    await expect(beginGitHubConnection({
+      ...common,
+      fetcher: vi.fn(async () => json({ installationUrl: "https://github.com/apps/creator-agent/installations/new?state=opaque" })),
+    })).resolves.toMatch(/^https:\/\/github\.com\/apps\/creator-agent/);
+    await expect(beginGitHubConnection({
+      ...common,
+      fetcher: vi.fn(async () => json({ installationUrl: "https://github.com.evil.example/steal" })),
+    })).rejects.toThrowError(/unsafe GitHub installation URL/i);
+  });
+
+  it("lists approved repositories and imports selected text without receiving a GitHub token", async () => {
+    const fetcher = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const target = String(url);
+      if (target.endsWith("/v1/github/installations/42/repositories")) return json({ repositories: [{
+        id: 7,
+        owner: "yvetteYSY",
+        name: "creator-agent",
+        fullName: "yvetteYSY/creator-agent",
+        private: false,
+        defaultBranch: "main",
+      }] });
+      if (target.endsWith(`/v1/agents/${durableAgent.id}/sources/github`) && init?.method === "POST") return json({
+        source: { ...durableSource, type: "document", status: "ready" },
+        content: "# Creator guide\n\nPublish one durable idea.",
+        origin: { htmlUrl: "https://github.com/yvetteYSY/creator-agent/blob/main/README.md" },
+      }, 201);
+      return json({ error: "unexpected request" }, 500);
+    });
+    const common = {
+      baseUrl: "https://api.example",
+      getAccessToken: async () => "auth0-access-token",
+      fetcher,
+    };
+    const repositories = await listDurableGitHubRepositories({ ...common, installationId: 42 });
+    expect(repositories[0]?.fullName).toBe("yvetteYSY/creator-agent");
+    const imported = await importDurableGitHubSource({
+      ...common,
+      agentId: durableAgent.id,
+      input: {
+        installationId: 42,
+        title: "Creator guide",
+        repositoryOwner: "yvetteYSY",
+        repositoryName: "creator-agent",
+        path: "README.md",
+      },
+    });
+    expect(imported.content).toContain("Publish one durable idea");
+    expect(imported.source.visibility).toBe("preview");
+    expect(JSON.stringify(fetcher.mock.calls)).not.toContain("githubToken");
+    expect(JSON.stringify(fetcher.mock.calls)).not.toContain("installationToken");
   });
 });

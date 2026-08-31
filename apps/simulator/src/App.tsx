@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   BookOpen,
   Bot,
@@ -10,6 +10,7 @@ import {
   FileText,
   Film,
   FlaskConical,
+  GitBranch,
   LockKeyhole,
   LogOut,
   MessageCircle,
@@ -38,7 +39,13 @@ import {
   type StylePreset,
 } from "@creator-agent/core";
 import { useCreatorAuth } from "./auth";
-import { DEFAULT_DURABLE_AGENT, useCreatorWorkspace, type DurableAgent } from "./creator-workspace";
+import {
+  DEFAULT_DURABLE_AGENT,
+  useCreatorWorkspace,
+  type DurableAgent,
+  type DurableGitHubInstallation,
+  type DurableGitHubRepository,
+} from "./creator-workspace";
 
 type View = "studio" | "customize" | "preview" | "routing" | "load";
 type AudienceId = "maya" | "theo" | "jules";
@@ -132,6 +139,17 @@ export function App() {
   const agent = runtime.engine.getAgent(runtime.agentId);
   const sources = runtime.engine.listSources(runtime.ownerId, runtime.agentId);
 
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    const githubResult = url.searchParams.get("github");
+    if (!githubResult) return;
+    setNotice(githubResult === "connected"
+      ? "GitHub connected. Choose an approved repository and import a knowledge file."
+      : "GitHub could not be connected. Nothing was imported.");
+    url.searchParams.delete("github");
+    window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+  }, []);
+
   const refresh = (message?: string) => {
     setRevision((current) => current + 1);
     if (message) setNotice(message);
@@ -189,6 +207,25 @@ export function App() {
             agent={agent}
             sources={sources}
             uploadsEnabled={workspace.isPersistent}
+            githubInstallations={workspace.githubInstallations}
+            onConnectGitHub={async () => {
+              const installationUrl = await workspace.connectGitHub();
+              window.location.assign(installationUrl);
+            }}
+            onListGitHubRepositories={workspace.listGitHubRepositories}
+            onImportGitHub={async (input) => {
+              const imported = await workspace.importGitHubSource(input);
+              const source = runtime.engine.addSource({
+                ownerId: runtime.ownerId,
+                agentId: runtime.agentId,
+                title: input.title,
+                kind: "document",
+                visibility: "preview",
+                content: imported.content,
+              });
+              setDurableSourceIds((current) => ({ ...current, [source.id]: imported.source.id }));
+              refresh("GitHub file imported privately. Review it before enabling public answers.");
+            }}
             onAddSource={(input) => {
               const source = runtime.engine.addSource({
                 ownerId: runtime.ownerId,
@@ -354,6 +391,10 @@ function Studio({
   agent,
   sources,
   uploadsEnabled,
+  githubInstallations,
+  onConnectGitHub,
+  onListGitHubRepositories,
+  onImportGitHub,
   onAddSource,
   onStageVideo,
   onVisibility,
@@ -365,6 +406,17 @@ function Studio({
   agent: ReturnType<CreatorAgentEngine["getAgent"]>;
   sources: Source[];
   uploadsEnabled: boolean;
+  githubInstallations: DurableGitHubInstallation[];
+  onConnectGitHub: () => Promise<void>;
+  onListGitHubRepositories: (installationId: number) => Promise<DurableGitHubRepository[]>;
+  onImportGitHub: (input: {
+    installationId: number;
+    title: string;
+    repositoryOwner: string;
+    repositoryName: string;
+    path: string;
+    ref?: string;
+  }) => Promise<void>;
   onAddSource: (input: { title: string; kind: SourceKind; content: string; visibility: SourceVisibility }) => void;
   onStageVideo: (input: { title: string; file: File; fileName: string; mimeType: string; size: number; visibility: SourceVisibility; transcript?: string }) => void;
   onVisibility: (sourceId: string, visibility: SourceVisibility) => void;
@@ -375,17 +427,55 @@ function Studio({
 }) {
   const [showForm, setShowForm] = useState(false);
   const [title, setTitle] = useState("");
-  const [kind, setKind] = useState<SourceKind>("document");
+  const [kind, setKind] = useState<SourceKind | "github">("document");
   const [visibility, setVisibility] = useState<SourceVisibility>("preview");
   const [content, setContent] = useState("");
   const [videoFile, setVideoFile] = useState<File | null>(null);
   const [transcriptFile, setTranscriptFile] = useState<File | null>(null);
+  const [githubInstallationId, setGitHubInstallationId] = useState("");
+  const [githubRepositories, setGitHubRepositories] = useState<DurableGitHubRepository[]>([]);
+  const [githubRepository, setGitHubRepository] = useState("");
+  const [githubPath, setGitHubPath] = useState("README.md");
+  const [githubRef, setGitHubRef] = useState("");
+  const [githubLoading, setGitHubLoading] = useState(false);
   const [error, setError] = useState("");
+
+  const activeGitHubInstallations = githubInstallations.filter((installation) => installation.status === "active");
+
+  const loadGitHubRepositories = async (installationId: number) => {
+    setGitHubLoading(true);
+    setError("");
+    try {
+      const repositories = await onListGitHubRepositories(installationId);
+      setGitHubRepositories(repositories);
+      setGitHubRepository(repositories[0]?.fullName ?? "");
+    } catch (caught) {
+      setGitHubRepositories([]);
+      setGitHubRepository("");
+      setError(caught instanceof Error ? caught.message : "Could not load GitHub repositories.");
+    } finally {
+      setGitHubLoading(false);
+    }
+  };
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
     try {
-      if (kind === "video") {
+      if (kind === "github") {
+        const installationId = Number(githubInstallationId);
+        const repository = githubRepositories.find((candidate) => candidate.fullName === githubRepository);
+        if (!Number.isSafeInteger(installationId) || installationId <= 0 || !repository) {
+          throw new Error("Choose an approved GitHub repository.");
+        }
+        await onImportGitHub({
+          installationId,
+          title,
+          repositoryOwner: repository.owner,
+          repositoryName: repository.name,
+          path: githubPath,
+          ref: githubRef.trim() || undefined,
+        });
+      } else if (kind === "video") {
         if (!videoFile) throw new Error("Choose an MP4, WebM, or QuickTime video.");
         onStageVideo({
           title,
@@ -403,6 +493,8 @@ function Studio({
       setContent("");
       setVideoFile(null);
       setTranscriptFile(null);
+      setGitHubPath("README.md");
+      setGitHubRef("");
       setVisibility("preview");
       setShowForm(false);
       setError("");
@@ -439,7 +531,9 @@ function Studio({
 
           {showForm && (
             <form className="source-form" onSubmit={submit}>
-              <div className="form-banner"><LockKeyhole aria-hidden="true" /><span>{kind === "video"
+              <div className="form-banner"><LockKeyhole aria-hidden="true" /><span>{kind === "github"
+                ? "Creator Agent reads only the file you select. It stores a private copy for review and never sends it to an AI provider."
+                : kind === "video"
                 ? uploadsEnabled
                   ? "The video uploads directly to private object storage using a short-lived, size-limited policy. It is not sent to an AI provider."
                   : "The selected file stays in this browser. No bytes are uploaded or sent to a transcription service."
@@ -447,26 +541,87 @@ function Studio({
               <div className="form-row">
                 <label>
                   Source title
-                  <input value={title} onChange={(event) => setTitle(event.target.value)} placeholder={kind === "video" ? "e.g. My creator workshop" : "e.g. My podcast transcript"} />
+                  <input required value={title} onChange={(event) => setTitle(event.target.value)} placeholder={kind === "video" ? "e.g. My creator workshop" : kind === "github" ? "e.g. Product guide" : "e.g. My podcast transcript"} />
                 </label>
                 <label>
                   Content type
                   <select value={kind} onChange={(event) => {
-                    const nextKind = event.target.value as SourceKind;
+                    const nextKind = event.target.value as SourceKind | "github";
                     setKind(nextKind);
                     setError("");
                     if (nextKind !== "video") {
                       setVideoFile(null);
                       setTranscriptFile(null);
                     }
+                    if (nextKind === "github" && activeGitHubInstallations[0]) {
+                      const installationId = activeGitHubInstallations[0].id;
+                      setGitHubInstallationId(String(installationId));
+                      void loadGitHubRepositories(installationId);
+                    }
                   }}>
                     <option value="document">Document</option>
                     <option value="video">Video file</option>
                     <option value="audio">Audio transcript</option>
+                    {uploadsEnabled && <option value="github">GitHub repository</option>}
                   </select>
                 </label>
               </div>
-              {kind === "video" ? (
+              {kind === "github" ? (
+                <div className="github-source-fields">
+                  {activeGitHubInstallations.length === 0 ? (
+                    <div className="github-connect-card">
+                      <GitBranch aria-hidden="true" />
+                      <span><strong>Connect GitHub to continue</strong><small>Select exactly which repositories Creator Agent may read.</small></span>
+                      <button className="button secondary" type="button" onClick={() => void onConnectGitHub().catch((caught: unknown) => {
+                        setError(caught instanceof Error ? caught.message : "Could not start the GitHub connection.");
+                      })}><GitBranch aria-hidden="true" /> Connect GitHub</button>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="form-row">
+                        <label>
+                          GitHub account
+                          <select value={githubInstallationId} onChange={(event) => {
+                            const installationId = Number(event.target.value);
+                            setGitHubInstallationId(event.target.value);
+                            void loadGitHubRepositories(installationId);
+                          }}>
+                            {activeGitHubInstallations.map((installation) => (
+                              <option key={installation.id} value={installation.id}>{installation.accountLogin} · {installation.repositorySelection} repositories</option>
+                            ))}
+                          </select>
+                        </label>
+                        <label>
+                          Approved repository
+                          <select disabled={githubLoading || githubRepositories.length === 0} value={githubRepository} onChange={(event) => {
+                            const fullName = event.target.value;
+                            setGitHubRepository(fullName);
+                            const repository = githubRepositories.find((candidate) => candidate.fullName === fullName);
+                            if (repository && !title) setTitle(repository.name);
+                          }}>
+                            {githubLoading && <option value="">Loading repositories…</option>}
+                            {!githubLoading && githubRepositories.length === 0 && <option value="">No repositories available</option>}
+                            {githubRepositories.map((repository) => (
+                              <option key={repository.id} value={repository.fullName}>{repository.fullName}{repository.private ? " · private" : ""}</option>
+                            ))}
+                          </select>
+                        </label>
+                      </div>
+                      <div className="form-row">
+                        <label>
+                          Markdown or text file path
+                          <input required value={githubPath} onChange={(event) => setGitHubPath(event.target.value)} placeholder="docs/guide.md" />
+                        </label>
+                        <label>
+                          Branch, tag, or commit <span>(optional)</span>
+                          <input value={githubRef} onChange={(event) => setGitHubRef(event.target.value)} placeholder="Uses the default branch" />
+                        </label>
+                      </div>
+                      <p className="processing-explainer"><ShieldCheck /> Imported files begin as preview-only. GitHub tokens remain server-side and are never stored by Creator Agent.</p>
+                    </>
+                  )}
+                </div>
+              ) : kind === "video" ? (
                 <div className="video-inputs">
                 <label className="video-picker">
                   Video file
@@ -522,7 +677,7 @@ function Studio({
                   <textarea value={content} onChange={(event) => setContent(event.target.value)} placeholder="Paste text or a transcript to simulate scanning, chunking, and retrieval…" rows={5} />
                 </label>
               )}
-              <fieldset>
+              {kind !== "github" && <fieldset>
                 <legend>Who can use this source?</legend>
                 <label className={visibility === "preview" ? "radio-card selected" : "radio-card"}>
                   <input type="radio" name="visibility" checked={visibility === "preview"} onChange={() => setVisibility("preview")} />
@@ -534,11 +689,11 @@ function Studio({
                   <Users aria-hidden="true" />
                   <span><strong>Public answers</strong><small>May be cited by the published agent</small></span>
                 </label>
-              </fieldset>
+              </fieldset>}
               {error && <p className="form-error" role="alert">{error}</p>}
               <div className="form-actions">
                 <button className="button ghost" type="button" onClick={() => setShowForm(false)}>Cancel</button>
-                <button className="button primary" type="submit">{kind === "video" ? <UploadCloud aria-hidden="true" /> : <Sparkles aria-hidden="true" />} {kind === "video" ? uploadsEnabled ? "Upload video privately" : transcriptFile ? "Process video + transcript" : "Stage video" : "Process source"}</button>
+                <button className="button primary" type="submit" disabled={kind === "github" && (githubLoading || activeGitHubInstallations.length === 0)}>{kind === "video" ? <UploadCloud aria-hidden="true" /> : kind === "github" ? <GitBranch aria-hidden="true" /> : <Sparkles aria-hidden="true" />} {kind === "github" ? "Import privately" : kind === "video" ? uploadsEnabled ? "Upload video privately" : transcriptFile ? "Process video + transcript" : "Stage video" : "Process source"}</button>
               </div>
             </form>
           )}

@@ -122,7 +122,7 @@ describe("protected creator API", () => {
       AUTH0_AUDIENCE: "https://api.example",
       DATABASE_URL: "postgres://database",
       API_ALLOWED_ORIGIN: "https://app.example",
-    }).allowedOrigin).toBe("https://app.example");
+    })).toMatchObject({ allowedOrigin: "https://app.example", host: "127.0.0.1" });
   });
 
   it("derives a durable creator ID only from the verified token principal", async () => {

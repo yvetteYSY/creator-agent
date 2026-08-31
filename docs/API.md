@@ -8,12 +8,18 @@ The API resolves a signed-in Auth0 identity to a durable internal creator record
 | --- | --- | --- |
 | `GET /health` | Public | Liveness response with `aiCalls: 0` |
 | `GET /v1/me` | Auth0 bearer token with `read:creator` | Upsert and return the caller's internal creator ID |
+| `POST /v1/github/connect` | `write:agent` | Start a creator-bound, expiring GitHub App installation flow |
+| `GET /v1/github/callback` | One-time state plus GitHub OAuth code | Verify the GitHub administrator and bind the installation |
+| `POST /v1/github/webhooks` | GitHub HMAC signature | Apply installation suspend/uninstall/repository lifecycle state |
+| `GET /v1/github/installations` | `read:creator` | List only the caller's GitHub installations |
+| `GET /v1/github/installations/:installationId/repositories` | `read:creator` | List repositories granted to one caller-owned active installation |
 | `GET /v1/agents` | `read:creator` | List only the caller's agents |
 | `POST /v1/agents` | `write:agent` | Create a draft agent and configuration version 1 |
 | `GET /v1/agents/:agentId` | `read:creator` | Read one caller-owned agent |
 | `PATCH /v1/agents/:agentId` | `write:agent` | Create a new immutable configuration snapshot |
 | `GET /v1/agents/:agentId/sources` | `read:creator` | List caller-owned source metadata |
 | `POST /v1/agents/:agentId/sources` | `write:agent` | Create private, awaiting-upload source metadata |
+| `POST /v1/agents/:agentId/sources/github` | `write:agent` | Import one selected Markdown/MDX/text file as preview-only knowledge |
 | `POST /v1/agents/:agentId/sources/uploads` | `write:agent` | Authorize one private direct MP4 upload |
 | `POST /v1/agents/:agentId/sources/:sourceId/complete` | `write:agent` | Verify stored size/type and mark the source uploaded |
 | `GET /v1/agents/:agentId/sources/:sourceId/transcript` | `read:creator` | Read the caller-owned transcript draft or reviewed version |
@@ -70,7 +76,7 @@ npm run scan:once
 npm run cleanup:once
 ```
 
-Both one-shot commands use server-only configuration, print only opaque job metadata plus `aiCalls: 0`, and exit after one source or an idle result. Apply migrations through 010 for the current API. `scan:once` requires private storage and `MALWARE_SCANNER_HOST`; it fails closed when ClamAV is unavailable. `cleanup:once` reconciles physical deletion for already tombstoned sources. Run them from a controlled scheduler. Neither invokes an AI provider.
+Both one-shot commands use server-only configuration, print only opaque job metadata plus `aiCalls: 0`, and exit after one source or an idle result. Apply migrations through 011 for the current API. `scan:once` requires private storage and `MALWARE_SCANNER_HOST`; it fails closed when ClamAV is unavailable. `cleanup:once` reconciles physical deletion for already tombstoned sources. Run them from a controlled scheduler. Neither invokes an AI provider.
 
 The API listens on `http://127.0.0.1:4320`. Set `VITE_CREATOR_API_URL=http://127.0.0.1:4320` in the simulator's `.env.local`, restart the simulator, and complete Auth0 login.
 
@@ -84,8 +90,9 @@ The identity and workspace tables store:
 - A deletion timestamp when access is revoked
 - Agent name, description, draft/publication state, and immutable configuration versions
 - Source title, media type, processing status, private/public/disabled visibility, opaque storage key, expected content type/size, upload-policy expiry, bounded scan state, detected duration/video/audio codecs, malware verdict/scanner/time, creator-provided WebVTT/version/review metadata, and storage-deletion completion/lease/attempt state
+- GitHub installation/account/lifecycle metadata and the explicitly selected imported text, repository path/ref/blob SHA, and GitHub file URL
 
-PostgreSQL does not store access tokens, passwords, email addresses, display names, profile images, uploaded video bytes, storage credentials, or AI-provider credentials. Creator-provided WebVTT is stored in the owner-scoped transcript table for review and must use encrypted database storage in production; it is never copied into audit events or logs. Source deletion overwrites its transcript content and timing metadata before marking the row deleted. Uploaded video bytes live only in the configured private object store. A unique `(auth_issuer, auth_subject)` constraint provides stable mapping under concurrent logins. A deleted identity is not automatically reactivated.
+PostgreSQL does not store Auth0/GitHub access tokens, passwords, email addresses, display names, profile images, uploaded video bytes, storage credentials, GitHub App secrets, or AI-provider credentials. Creator-provided WebVTT and selected GitHub file content are stored in owner-scoped tables and must use encrypted database storage in production; neither is copied into audit events or logs. Source deletion overwrites transcript content before tombstoning or cascades deletion of its GitHub-import row. Uploaded video bytes live only in the configured private object store. A unique `(auth_issuer, auth_subject)` constraint provides stable mapping under concurrent logins. A deleted identity is not automatically reactivated.
 
 Ingestion lifecycle changes also append immutable `audit_events` rows containing only actor class/opaque creator ID, action, source UUID, bounded state metadata, and timestamp. Filenames, titles, Auth0 subjects, storage keys, signed URLs, transcripts, and bytes are forbidden by the writer contract and regression tests. PostgreSQL triggers reject application-level `UPDATE` and `DELETE` against these events. Retention/export policy and broader agent/publishing coverage remain future work.
 

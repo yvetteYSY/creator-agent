@@ -5,6 +5,7 @@ import { PostgresCreatorRepository } from "../src/creator-store";
 import { PostgresStorageDeletionRepository } from "../src/cleanup-store";
 import { PostgresScanRepository } from "../src/scanner-store";
 import { PostgresTranscriptRepository } from "../src/transcript-store";
+import { PostgresGitHubIntegrationRepository } from "../src/github-store";
 import {
   PostgresWorkspaceRepository,
   WorkspaceRecordNotFoundError,
@@ -27,6 +28,7 @@ suite("PostgreSQL creator workspace integration", () => {
       "008_media_inspection.sql",
       "009_malware_scanning.sql",
       "010_creator_transcripts.sql",
+      "011_github_app_integrations.sql",
     ]) {
       const sql = await readFile(new URL(`../migrations/${migration}`, import.meta.url), "utf8");
       await pool!.query(sql);
@@ -74,6 +76,37 @@ suite("PostgreSQL creator workspace integration", () => {
     });
     await expect(workspace.getAgent(ownerB.id, agent.id))
       .rejects.toThrowError(WorkspaceRecordNotFoundError);
+
+    const github = new PostgresGitHubIntegrationRepository(pool!);
+    const stateDigest = "a".repeat(64);
+    await github.beginConnection(ownerA.id, stateDigest, new Date(Date.now() + 60_000).toISOString());
+    await github.completeConnection(stateDigest, {
+      id: 42,
+      accountLogin: "yvetteYSY",
+      accountType: "User",
+      repositorySelection: "selected",
+      suspended: false,
+    });
+    const imported = await github.importTextSource(ownerA.id, agent.id, {
+      installationId: 42,
+      title: "Private repository guide",
+      repositoryOwner: "yvetteYSY",
+      repositoryName: "creator-agent",
+      path: "README.md",
+      file: {
+        content: "Private imported content must be erased on deletion.",
+        sha: "abc123",
+        htmlUrl: "https://github.com/yvetteYSY/creator-agent/blob/main/README.md",
+        size: 52,
+      },
+    });
+    expect(imported.source).toMatchObject({ status: "ready", visibility: "preview" });
+    await workspace.deleteSource(ownerA.id, agent.id, imported.source.id);
+    const erasedImport = await pool!.query(
+      "SELECT count(*)::integer AS count FROM github_source_imports WHERE source_id = $1",
+      [imported.source.id],
+    );
+    expect(erasedImport.rows[0]?.count).toBe(0);
 
     const source = await workspace.createSource(ownerA.id, agent.id, {
       title: "Integration video",

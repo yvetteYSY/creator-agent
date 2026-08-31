@@ -40,6 +40,26 @@ export interface DurableSource {
   updatedAt: string;
 }
 
+export interface DurableGitHubInstallation {
+  id: number;
+  accountLogin: string;
+  accountType: "User" | "Organization";
+  repositorySelection: "all" | "selected";
+  suspended: boolean;
+  status: "active" | "suspended" | "revoked";
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DurableGitHubRepository {
+  id: number;
+  owner: string;
+  name: string;
+  fullName: string;
+  private: boolean;
+  defaultBranch: string;
+}
+
 export interface CreatorApiConfiguration {
   mode: AuthMode;
   baseUrl?: string;
@@ -60,6 +80,7 @@ interface CreatorWorkspace {
   creatorId?: string;
   agent?: DurableAgent;
   sources: DurableSource[];
+  githubInstallations: DurableGitHubInstallation[];
   isPersistent: boolean;
   isLoading: boolean;
   error?: string;
@@ -68,12 +89,23 @@ interface CreatorWorkspace {
   uploadVideo: (input: { title: string; file: File }) => Promise<DurableSource | null>;
   setSourceVisibility: (sourceId: string, visibility: DurableSourceVisibility) => Promise<DurableSource | null>;
   deleteSource: (sourceId: string) => Promise<void>;
+  connectGitHub: () => Promise<string>;
+  listGitHubRepositories: (installationId: number) => Promise<DurableGitHubRepository[]>;
+  importGitHubSource: (input: {
+    installationId: number;
+    title: string;
+    repositoryOwner: string;
+    repositoryName: string;
+    path: string;
+    ref?: string;
+  }) => Promise<{ source: DurableSource; content: string }>;
 }
 
 interface RemoteWorkspaceState {
   creatorId?: string;
   agent?: DurableAgent;
   sources: DurableSource[];
+  githubInstallations: DurableGitHubInstallation[];
   isLoading: boolean;
   error?: string;
 }
@@ -211,10 +243,23 @@ export async function openCreatorWorkspace({
     fetcher,
   }) as { sources?: unknown };
   if (!Array.isArray(listedSources.sources)) throw new Error("The creator API returned an invalid source list.");
+  let githubInstallations: DurableGitHubInstallation[] = [];
+  try {
+    const github = await creatorApiRequest({
+      baseUrl,
+      path: "/v1/github/installations",
+      getAccessToken,
+      fetcher,
+    }) as { installations?: unknown };
+    if (Array.isArray(github.installations)) githubInstallations = github.installations.map(durableGitHubInstallation);
+  } catch {
+    // GitHub is an optional integration and must not prevent the creator workspace from opening.
+  }
   return {
     profile,
     agent,
     sources: listedSources.sources.map(durableSource),
+    githubInstallations,
   };
 }
 
@@ -308,6 +353,52 @@ export async function uploadDurableVideo(
   }
 }
 
+export async function beginGitHubConnection(options: CreatorApiCallOptions) {
+  const result = await creatorApiRequest({
+    ...options,
+    path: "/v1/github/connect",
+    method: "POST",
+  }) as { installationUrl?: unknown };
+  if (typeof result.installationUrl !== "string") throw new Error("The creator API returned an invalid GitHub installation URL.");
+  const url = new URL(result.installationUrl);
+  if (url.protocol !== "https:" || url.hostname !== "github.com") throw new Error("The creator API returned an unsafe GitHub installation URL.");
+  return url.toString();
+}
+
+export async function listDurableGitHubRepositories(
+  options: CreatorApiCallOptions & { installationId: number },
+) {
+  const result = await creatorApiRequest({
+    ...options,
+    path: `/v1/github/installations/${options.installationId}/repositories`,
+  }) as { repositories?: unknown };
+  if (!Array.isArray(result.repositories)) throw new Error("The creator API returned an invalid GitHub repository list.");
+  return result.repositories.map(durableGitHubRepository);
+}
+
+export async function importDurableGitHubSource(
+  options: CreatorApiCallOptions & {
+    agentId: string;
+    input: {
+      installationId: number;
+      title: string;
+      repositoryOwner: string;
+      repositoryName: string;
+      path: string;
+      ref?: string;
+    };
+  },
+) {
+  const result = await creatorApiRequest({
+    ...options,
+    path: `/v1/agents/${encodeURIComponent(options.agentId)}/sources/github`,
+    method: "POST",
+    body: options.input,
+  }) as { source?: unknown; content?: unknown };
+  if (typeof result.content !== "string") throw new Error("The creator API returned invalid GitHub source content.");
+  return { source: durableSource(result.source), content: result.content };
+}
+
 export function CreatorWorkspaceProvider({
   children,
   configuration,
@@ -319,12 +410,13 @@ export function CreatorWorkspaceProvider({
   const [remote, setRemote] = useState<RemoteWorkspaceState>({
     isLoading: auth.mode === "auth0",
     sources: [],
+    githubInstallations: [],
   });
 
   useEffect(() => {
     if (auth.mode === "local" || configuration.error || !configuration.baseUrl) return;
     let current = true;
-    setRemote({ isLoading: true, sources: [] });
+    setRemote({ isLoading: true, sources: [], githubInstallations: [] });
     void openCreatorWorkspace({
       baseUrl: configuration.baseUrl,
       getAccessToken: auth.getAccessToken,
@@ -333,11 +425,13 @@ export function CreatorWorkspaceProvider({
         creatorId: workspace.profile.id,
         agent: workspace.agent,
         sources: workspace.sources,
+        githubInstallations: workspace.githubInstallations,
         isLoading: false,
       }),
       (error: unknown) => current && setRemote({
         isLoading: false,
         sources: [],
+        githubInstallations: [],
         error: error instanceof Error ? error.message : "The creator API is unavailable.",
       }),
     );
@@ -349,6 +443,7 @@ export function CreatorWorkspaceProvider({
     if (auth.mode === "local") return {
       creatorId: auth.user?.id,
       sources: [],
+      githubInstallations: [],
       isPersistent: false,
       isLoading: false,
       saveAgent: async () => null,
@@ -356,6 +451,9 @@ export function CreatorWorkspaceProvider({
       uploadVideo: async () => null,
       setSourceVisibility: async () => null,
       deleteSource: async () => undefined,
+      connectGitHub: async () => { throw new Error("GitHub connection requires managed authentication."); },
+      listGitHubRepositories: async () => [],
+      importGitHubSource: async () => { throw new Error("GitHub import requires managed authentication."); },
     };
     const apiOptions = {
       baseUrl: configuration.baseUrl!,
@@ -409,6 +507,21 @@ export function CreatorWorkspaceProvider({
           sources: current.sources.filter((source) => source.id !== sourceId),
         }));
       },
+      connectGitHub: async () => beginGitHubConnection(apiOptions),
+      listGitHubRepositories: async (installationId) => listDurableGitHubRepositories({
+        ...apiOptions,
+        installationId,
+      }),
+      importGitHubSource: async (input) => {
+        if (!remote.agent) throw new Error("No durable agent is open.");
+        const imported = await importDurableGitHubSource({
+          ...apiOptions,
+          agentId: remote.agent.id,
+          input,
+        });
+        setRemote((current) => ({ ...current, sources: [imported.source, ...current.sources] }));
+        return imported;
+      },
     };
   }, [auth.getAccessToken, auth.mode, auth.user?.id, configuration.baseUrl, configuration.error, remote]);
 
@@ -420,12 +533,16 @@ function unavailableWorkspace(error: string): CreatorWorkspace {
     isLoading: false,
     isPersistent: false,
     sources: [],
+    githubInstallations: [],
     error,
     saveAgent: async () => null,
     createSource: async () => null,
     uploadVideo: async () => null,
     setSourceVisibility: async () => null,
     deleteSource: async () => undefined,
+    connectGitHub: async () => { throw new Error("GitHub App integration is unavailable."); },
+    listGitHubRepositories: async () => [],
+    importGitHubSource: async () => { throw new Error("GitHub App integration is unavailable."); },
   };
 }
 
@@ -481,6 +598,33 @@ function durableSource(value: unknown): DurableSource {
     typeof source.createdAt !== "string" || typeof source.updatedAt !== "string"
   ) throw new Error("The creator API returned an invalid source.");
   return source as DurableSource;
+}
+
+function durableGitHubInstallation(value: unknown): DurableGitHubInstallation {
+  if (!value || typeof value !== "object") throw new Error("The creator API returned an invalid GitHub installation.");
+  const installation = value as Partial<DurableGitHubInstallation>;
+  if (
+    typeof installation.id !== "number" || !Number.isSafeInteger(installation.id) || installation.id <= 0 ||
+    typeof installation.accountLogin !== "string" ||
+    (installation.accountType !== "User" && installation.accountType !== "Organization") ||
+    (installation.repositorySelection !== "all" && installation.repositorySelection !== "selected") ||
+    typeof installation.suspended !== "boolean" ||
+    (installation.status !== "active" && installation.status !== "suspended" && installation.status !== "revoked") ||
+    typeof installation.createdAt !== "string" || typeof installation.updatedAt !== "string"
+  ) throw new Error("The creator API returned an invalid GitHub installation.");
+  return installation as DurableGitHubInstallation;
+}
+
+function durableGitHubRepository(value: unknown): DurableGitHubRepository {
+  if (!value || typeof value !== "object") throw new Error("The creator API returned an invalid GitHub repository.");
+  const repository = value as Partial<DurableGitHubRepository>;
+  if (
+    typeof repository.id !== "number" || !Number.isSafeInteger(repository.id) || repository.id <= 0 ||
+    typeof repository.owner !== "string" || typeof repository.name !== "string" ||
+    typeof repository.fullName !== "string" || typeof repository.private !== "boolean" ||
+    typeof repository.defaultBranch !== "string"
+  ) throw new Error("The creator API returned an invalid GitHub repository.");
+  return repository as DurableGitHubRepository;
 }
 
 function uploadPolicy(value: unknown) {
