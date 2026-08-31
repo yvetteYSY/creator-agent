@@ -123,6 +123,12 @@ describe("protected creator API", () => {
       DATABASE_URL: "postgres://database",
       API_ALLOWED_ORIGIN: "https://app.example",
     })).toMatchObject({ allowedOrigin: "https://app.example", host: "127.0.0.1" });
+    expect(loadApiConfiguration({
+      AUTH0_ISSUER_BASE_URL: "https://tenant.example/",
+      AUTH0_AUDIENCE: "https://api.example",
+      DATABASE_URL: "postgres://database",
+      PORT: "10000",
+    }).port).toBe(10_000);
   });
 
   it("derives a durable creator ID only from the verified token principal", async () => {

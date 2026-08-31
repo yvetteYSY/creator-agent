@@ -14,7 +14,7 @@ function required(environment: NodeJS.ProcessEnv, name: string) {
 }
 
 export function loadApiConfiguration(environment: NodeJS.ProcessEnv): ApiConfiguration {
-  const port = environment.API_PORT ?? "4320";
+  const port = environment.API_PORT ?? environment.PORT ?? "4320";
   const parsedPort = Number.parseInt(port, 10);
   if (!/^\d+$/.test(port) || parsedPort < 1 || parsedPort > 65_535) {
     throw new Error("API_PORT must be a valid TCP port.");

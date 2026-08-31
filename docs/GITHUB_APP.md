@@ -17,7 +17,7 @@ Creator Agent can connect to repositories selected by a signed-in creator and im
 
 ## Register the GitHub App
 
-The API must already have a public HTTPS origin. In GitHub, open **Settings → Developer settings → GitHub Apps → New GitHub App** and use:
+The API must already have a public HTTPS origin. The [free beta deployment guide](DEPLOY_FREE_BETA.md) provides a no-AI-cost reference path. In GitHub, open **Settings → Developer settings → GitHub Apps → New GitHub App** and use:
 
 | Setting | Value |
 | --- | --- |
