@@ -1,12 +1,32 @@
 # Creator Agent
 
-Creator Agent is a mobile-first platform that lets content creators build an AI agent grounded in their own documents, audio, and video. Creators upload or connect content, review what the system learned, configure the agent's voice and boundaries, and publish a shareable agent that audiences can chat with.
+> Turn a creator's documents, audio, and video into a source-grounded audience agent—without giving up control of private content or silently spending anyone's AI credits.
+
+[![Live beta](https://img.shields.io/badge/live_beta-try_it-6c5ce7)](https://creator-agent-yvetteysy.onrender.com)
+[![CI](https://github.com/yvetteYSY/creator-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/yvetteYSY/creator-agent/actions/workflows/ci.yml)
+[![AI provider calls](https://img.shields.io/badge/AI_provider_calls-0-1f883d)](#zero-cost-end-to-end-routing)
+
+[![Abstract visualization of creator content becoming a grounded agent](docs/assets/creator-agent-cover-abstract.png)](https://creator-agent-yvetteysy.onrender.com)
+
+Creator Agent is a mobile-first platform for building an AI agent grounded in creator-approved content. Creators can add or connect knowledge, review what the system learned, configure voice and boundaries, and preview how an audience agent answers with citations.
+
+## Try the public beta
+
+**[Open Creator Agent Studio](https://creator-agent-yvetteysy.onrender.com)** · [Watch the 33-second demo](docs/assets/creator-agent-e2e-demo.mp4) · [Read the build story](docs/blog/BUILDING_CREATOR_AGENT.md) · [Share feedback](https://github.com/yvetteYSY/creator-agent/issues)
+
+The beta uses managed Auth0 sign-in and a protected API backed by PostgreSQL. It intentionally makes **zero AI-provider calls**: the current answer, customization, and load flows are deterministic, so trying the product does not consume the creator's or developer's model tokens. Render Free services may need up to about 50 seconds to wake after inactivity.
+
+Creator Agent is currently most useful for:
+
+- creators exploring a conversational layer for videos, podcasts, courses, newsletters, or documentation;
+- developers studying private-by-default ingestion, grounded answers, tenant isolation, and bring-your-own-agent routing;
+- early design partners willing to test onboarding, trust, customization, and source-review workflows.
 
 ## Project status
 
-The repository contains a test-first, responsive web MVP simulator. It demonstrates the product, privacy, routing, and concurrency behavior before introducing paid AI providers or production infrastructure.
+The repository contains a test-first, responsive web MVP and a deployed public beta. It demonstrates the product, privacy, routing, authentication, persistence, and concurrency behavior without introducing a paid AI provider.
 
-The default simulator is intentionally deterministic and local. **It makes no AI-provider calls, consumes no AI tokens, and cannot create model charges.** Managed Auth0 mode explicitly connects to Auth0 and the protected Creator Agent API, but neither path invokes an AI provider.
+The default local simulator is intentionally deterministic and network-free. **It makes no AI-provider calls, consumes no AI tokens, and cannot create model charges.** The live Auth0 mode connects to the protected Creator Agent API and durable Neon PostgreSQL database, but it still does not invoke an AI provider.
 
 ## E2E prototype video
 
@@ -20,12 +40,12 @@ For the complete build retrospective and key lessons, read [Turn Your Content In
 
 | Capability | Current implementation |
 | --- | --- |
-| Managed creator authentication | Auth0 Universal Login uses OIDC Authorization Code with PKCE, in-memory token caching, stable `sub` identity, and login/logout/error states. Tenant configuration is required to exercise real login. |
+| Managed creator authentication | The live beta uses Auth0 Universal Login with OIDC Authorization Code and PKCE, in-memory token caching, stable `sub` identity, and login/logout/error states. |
 | Protected creator API | `GET /v1/me` validates Auth0 JWT signature, issuer, audience, expiration, `RS256`, subject, and `read:creator` permission before returning an internal creator ID. |
 | Durable creator identity | PostgreSQL maps verified `(issuer, sub)` values to an opaque internal UUID without storing profile data or access tokens. |
 | Owner-scoped workspace API | Authenticated routes create, list, read, and version agents plus private-by-default source metadata. Every database path includes the verified internal owner ID. |
 | Durable studio synchronization | Auth0 mode loads or bootstraps the creator's agent, restores customization, and persists configuration plus new source metadata updates. Local mode remains network-free. |
-| Free GitHub App integration | Managed creators can install a minimum-permission GitHub App on selected repositories, list only approved repositories, and import one Markdown/MDX/text file (up to 1 MB) as preview-only knowledge. Tokens stay server-side and no AI call is made. See the [launch guide](docs/GITHUB_APP.md). |
+| Free GitHub App integration | The minimum-permission integration path can list selected repositories and import one Markdown/MDX/text file (up to 1 MB) as preview-only knowledge. Tokens stay server-side and no AI call is made. Public GitHub App registration is the remaining launch step; see the [launch guide](docs/GITHUB_APP.md). |
 | Creator studio | A seeded creator can manage an agent and its knowledge sources in a responsive web interface. |
 | Text ingestion | Document or audio-transcript text can be pasted, chunked, and indexed in browser memory. Local video can use a creator-provided WebVTT sidecar immediately; the managed API can durably store and version a validated WebVTT draft after quarantine scanning without an AI call. |
 | Private MP4 upload | In managed Auth0 mode, an MP4 up to 250 MB uploads directly to private S3-compatible storage through a 10-minute, exact-key/type/size policy. The Auth0 token is sent only to the API, never to storage. Local mode still stages the file without a network request. |
@@ -121,7 +141,7 @@ To connect a real user-owned agent, replace the local URL with an HTTPS endpoint
 - Embeddings, vector retrieval, model generation, and streaming responses
 - Native Expo/React Native application
 - Broader agent/publishing audit events, rate limits, moderation, and account-deletion jobs
-- Hosting, CI/CD, monitoring, backups, and operational runbooks
+- Production monitoring, backups, alerting, and operational runbooks
 
 ## Recommended MVP iteration
 
@@ -231,13 +251,14 @@ creator-agent/
 └── README.md
 ```
 
-The next production increment is tenant-filtered deterministic retrieval from approved durable transcript cues, alongside checksum/full-decoder hardening before any automatic transcription route can see the upload. The actual mobile and transcription-worker packages still wait on provider, hosting, privacy, and beta-cohort decisions. The deterministic core remains useful for product demos and fast policy regression tests.
+The next production increment is tenant-filtered deterministic retrieval from approved durable transcript cues, alongside checksum/full-decoder hardening before any automatic transcription route can see the upload. The actual mobile and transcription-worker packages still wait on provider, privacy, and beta-cohort decisions. The deterministic core remains useful for product demos and fast policy regression tests.
 
 ## Delivery milestones
 
 ### Milestone 0 — Foundation
 
 - **Available:** npm workspace, deterministic core, responsive simulator, Auth0 SPA integration, protected creator/workspace API, durable identity and workspace migrations, local reference endpoint, automated checks
+- **Available:** public Free-tier beta on Render with managed Auth0 login and Neon PostgreSQL persistence
 - **Available:** private signed MP4 upload authorization and completion verification
 - **Available:** bounded metadata-aware `uploaded → scanning → processing/failed` transitions with exclusive leases
 - **Available:** immutable content-free ingestion lifecycle audit events
@@ -278,6 +299,17 @@ The next production increment is tenant-filtered deterministic retrieval from ap
 - [Private video upload boundary](docs/PRIVATE_UPLOADS.md)
 - [Creator customization model](docs/CUSTOMIZATION.md)
 - [Bring Your Own Agent routing contract](docs/AGENT_ROUTING.md)
+
+## Share and help shape the project
+
+If Creator Agent is relevant to your work, the most useful ways to help are:
+
+- try the [live beta](https://creator-agent-yvetteysy.onrender.com) and report where onboarding or trust is unclear;
+- share the [demo video](docs/assets/creator-agent-e2e-demo.mp4) or [build retrospective](docs/blog/BUILDING_CREATOR_AGENT.md) with a creator who manages a large content library;
+- open a [GitHub issue](https://github.com/yvetteYSY/creator-agent/issues) with one concrete use case, expected question, and source type;
+- star or watch the repository if you want to follow the mobile, transcription, and grounded-retrieval milestones.
+
+Please do not include private content, credentials, access tokens, personal data, or security vulnerability details in public issues. Use the private reporting process in [Support and security](docs/SUPPORT.md) for sensitive reports.
 
 ## Contributing
 
